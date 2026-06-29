@@ -763,7 +763,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "openai" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "strands-agents", extras = ["a2a", "openai"], specifier = ">=0.1.0" },
+    { name = "strands-agents", extras = ["a2a", "openai"], specifier = ">=1.45.0" },
     { name = "strands-agents-tools", extras = ["a2a-client"], specifier = ">=0.1.0" },
 ]
 
