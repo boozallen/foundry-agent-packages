@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foundry-agent-config"
+version = "1.0.0"
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
+description = "Foundry Agent Config — YAML loader with env var merge (loader only, no base schema)"
+authors = [{ name = "Booz Allen Hamilton" }]
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = ["pydantic>=2.0", "PyYAML>=6.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foundry_agent_config"]
+
+[tool.ruff]
+# Inherit workspace ruff config (line-length, target-version, etc.) so this
+# package opts in to its own lint rules without re-stating shared settings.
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+# STIG V-222604 (CCI-001310) — prohibit command-injection sinks. Enforced in CI.
+# See README.md § "Security policy: command injection".
+extend-select = ["S102", "S307", "S602", "S603", "S604", "S605", "S606", "S607"]
+
+# Pytest + coverage config is package-local so each package owns its own
+# coverage source path and threshold. See docs/foundry/internal/coverage.md.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short --import-mode=importlib --cov=src/foundry_agent_config --cov-report=term-missing"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/foundry_agent_config"]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true

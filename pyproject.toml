@@ -1,0 +1,165 @@
+# Agent Packages Monorepo
+# UV Workspace configuration for managing foundry-agent-* Python packages
+
+[project]
+name = "foundry-agent-packages-workspace"
+version = "0.0.0"
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
+description = "Monorepo workspace for foundry-agent Python packages"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "foundry-agent-core",
+    "foundry-agent-config",
+    "foundry-agent-fastapi",
+    "foundry-strands-agent",
+]
+
+[dependency-groups]
+dev = [
+    "bandit[toml]==1.9.4",
+    "basedpyright==1.33.0",
+    "deptry==0.24.0",
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23",
+    "ruff==0.14.5",
+    "trustme>=1.0",
+    "vulture==2.16",
+]
+
+[tool.uv]
+required-version = ">=0.8.0"
+constraint-dependencies = [
+    "aiohttp>=3.14.1",
+    "cryptography>=48.0.1",
+    "idna>=3.15",
+    "pillow>=12.2.0",
+    "pyasn1>=0.6.3",
+    "pygments>=2.20.0",
+    "pyjwt>=2.13.0",
+    "starlette>=1.3.1",
+    "urllib3>=2.7.0",
+]
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+foundry-agent-core = { workspace = true }
+foundry-agent-config = { workspace = true }
+foundry-agent-fastapi = { workspace = true }
+foundry-strands-agent = { workspace = true }
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "ARG001",  # unused function arguments
+    "ARG005",  # unused lambda arguments
+    "B",       # flake8-bugbear
+    "C4",      # flake8-comprehensions
+    "D",       # pydocstyle
+    "E",       # pycodestyle errors
+    "F",       # pyflakes
+    "G",       # flake8-logging-format
+    "I",       # isort
+    "T20",     # flake8-print
+    "UP",      # pyupgrade
+    "W",       # pycodestyle warnings
+]
+extend-select = [
+    # STIG V-222604 (CCI-001310) command-injection sink coverage
+    "S102",   # use of exec
+    "S307",   # use of eval
+    "S602",   # subprocess with shell=True
+    "S603",   # subprocess without shell=True
+    "S604",   # any shell=True
+    "S605",   # starting process with a shell
+    "S606",   # starting process without shell
+    "S607",   # partial executable path
+]
+ignore = [
+    "B008",    # function call in argument default — common in FastAPI
+    "B904",    # raise from in except* — not always wanted
+    "C901",    # function too complex (subjective)
+    "D100", "D101", "D102", "D103", "D104", "D105", "D107",  # don't require docstrings
+    "D200", "D203", "D212", "D413", "D415", "D417",          # docstring formatting nits
+    "G002",    # allow %-style logging (project standard, see AGENTS.md)
+    # Conflict with Ruff formatter (per Ruff docs):
+    "D206", "D300", "E111", "E114", "E117", "E501", "W191",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "foundry_agent_core",
+    "foundry_agent_config",
+    "foundry_agent_fastapi",
+    "foundry_strands_agent",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"packages/*/tests/**" = [
+    "ARG001",  # pytest fixtures often appear unused but trigger DI
+    "ARG005",  # mock lambdas absorb **kwargs to match call signatures
+    "B011",    # assert False
+    "B017",    # pytest.raises(Exception) — fine in error-path tests
+    "D106",    # nested model classes in test fixtures don't need docstrings
+    "T201",    # print
+]
+"scripts/**" = [
+    "T201",    # CLI scripts print user-facing output
+]
+# tool_loader.py is a frozen security-critical file — pre-existing B904 cannot be fixed
+"packages/foundry-strands-agent/src/foundry_strands_agent/tool_loader.py" = ["B904"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.basedpyright]
+pythonVersion = "3.13"
+include = ["packages/*/src"]
+exclude = ["**/build", "**/dist", "**/.venv", "**/__pycache__"]
+typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+testpaths = ["packages/*/tests"]
+addopts = "-v --tb=short --import-mode=importlib"
+asyncio_mode = "auto"
+
+[tool.bandit]
+# CI runs the broad ruleset across packages; `just lint` runs only the narrow
+# B602/B603/B605/B607 subset that overlaps Ruff's S6xx rules. See README /
+# AGENTS.md "Security policy: command injection" and Phase 2d notes in
+# OSS_RELEASE_PLAN.md.
+exclude_dirs = ["tests", "openspec", "openspec/changes/archive"]
+targets = ["packages"]
+skips = ["B101"]  # assert_used — pytest convention
+
+[tool.vulture]
+# Advisory dead-code scan. Run via `just dead-code`. Not wired into pre-commit
+# or CI — the DI container, dynamic tool loading, and FastAPI decorators
+# generate enough false positives that vulture is best used as a periodic
+# pre-refactor checklist, not a gate.
+min_confidence = 80
+paths = ["packages/foundry-agent-core/src", "packages/foundry-agent-config/src", "packages/foundry-agent-fastapi/src", "packages/foundry-strands-agent/src"]
+sort_by_size = true
+exclude = [
+    "*/__pycache__/*",
+    "*/.venv/*",
+    "*/build/*",
+    "*/dist/*",
+    # Tools are loaded dynamically via STRANDS__TOOLS_MODULES /
+    # STRANDS__TOOLS_FILES; vulture can't see those references.
+    "*/foundry_strands_agent/tool_loader.py",
+    "*/foundry_strands_agent/_tool_factory.py",
+    # DI container surfaces are resolved at runtime by string keys; symbols
+    # look unreferenced statically.
+    "*/foundry_agent_core/container.py",
+]
