@@ -1,0 +1,65 @@
+schema: spec-driven
+
+context: |
+  ## Project: foundry-agent-packages
+
+  Monorepo of `foundry-agent-*` packages that provide the shared
+  infrastructure consumed by Foundry-built agents (composition roots
+  such as `strands-base-agent` install these packages and extend them).
+  Read `README.md` at the repo root and each package's `README.md` to
+  understand boundaries and consumer contracts before proposing changes.
+
+  **Workspace layout**: a uv workspace whose members live under
+  `packages/`. Each package is independently versioned, tested, and
+  released:
+  - `foundry-agent-core` — protocols, types, DI container, lifecycle,
+    masking/redaction, exceptions. Pure-Python; the lowest layer.
+  - `foundry-agent-config` — YAML + env-override loader with bounded
+    input controls. Generic; no agent-specific schema.
+  - `foundry-agent-fastapi` — HTTP layer: routes, middleware, request
+    and response models. Sits between an adapter and the framework
+    backend.
+  - `foundry-strands-agent` — AWS Strands SDK adapter: factory,
+    backend, query orchestration, tool loading/registry, chat history.
+
+  **Tech stack**: Python 3.13 (3.14 is a post-OSS upgrade),
+  `uv` workspace, Pydantic v2, FastAPI, AWS Strands SDK, OpenTelemetry,
+  `basedpyright` (replacing `pyright`), `ruff`, `bandit`, `vulture`,
+  `deptry`, `pytest`.
+
+  **Specs in this directory:**
+  - `openspec/specs/` — per-capability specs scoped to a single
+    package. Naming convention is `<package-area>-<capability>`
+    (e.g. `agent-core-container`, `strands-tool-loading`,
+    `fastapi-middleware`, `yaml-config-loader`). Read the relevant
+    spec(s) before proposing a change.
+  - `openspec/changes/` — active proposals (if any) and `archive/` of
+    completed ones.
+
+  **Security posture**: each package owns a
+  `packages/<pkg>/security/stig_checklist.json` tracking its findings
+  against the DISA ASD STIG (status, responsibility, evidence). When a
+  proposal touches a STIG-relevant area for a given package — auth,
+  authz, crypto, audit logging, session handling, data handling, or
+  input validation — update that package's checklist in the same
+  change.
+
+  **Hard constraints**:
+  - Respect package boundaries. `foundry-agent-core` is the lowest
+    layer and MUST NOT depend on the adapter packages. Adapters
+    (`foundry-strands-agent`, `foundry-agent-fastapi`) depend on
+    `foundry-agent-core`, never the reverse.
+  - `foundry-agent-config` is generic — do not introduce
+    agent-specific schema into it.
+  - Maintain hexagonal architecture: protocols in `foundry-agent-core`;
+    implementations behind those protocols in adapter packages.
+  - Each package ships its own `pyproject.toml`, tests, coverage
+    config, and (per OSS release plan) its own `CHANGELOG.md`.
+  - Keep commits small and independently reviewable; one capability
+    change per proposal.
+  - Run `just check` before marking any task complete.
+
+  **Release model**: wheels and SBOMs are attached to GitHub Releases.
+  Adopters host the packages in their own internal index (see
+  `docs/foundry/releases/adopting.md` once published). Public PyPI
+  publishing is explicitly deferred.
