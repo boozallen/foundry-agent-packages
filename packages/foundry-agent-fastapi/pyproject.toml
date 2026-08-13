@@ -16,7 +16,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["fastapi>=0.100", "foundry-agent-core>=1.0.0"]
+dependencies = ["fastapi>=0.141.1", "foundry-agent-core>=1.0.0"]
 
 [project.optional-dependencies]
 test = ["httpx>=0.28.1"]
