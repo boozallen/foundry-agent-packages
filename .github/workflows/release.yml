@@ -77,12 +77,15 @@ jobs:
           uv build --package ${{ steps.tag.outputs.package }} \
             --out-dir packages/${{ steps.tag.outputs.package }}/dist
 
+      - name: Install cyclonedx-py
+        run: uv tool install cyclonedx-bom==7.3.0
+
       - name: Generate SBOM
         run: |
           uv export \
             --package ${{ steps.tag.outputs.package }} \
             --no-hashes --no-header --frozen | \
-          uv run cyclonedx-py requirements \
+          cyclonedx-py requirements \
             --pyproject packages/${{ steps.tag.outputs.package }}/pyproject.toml \
             --mc-type library \
             --of JSON \
