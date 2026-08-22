@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*/v*"
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse tag
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          PACKAGE=${TAG%/v*}
+          VERSION=${TAG#*/v}
+          MODULE=${PACKAGE//-/_}
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "module=$MODULE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Validate package exists
+        run: |
+          if [ ! -f "packages/${{ steps.tag.outputs.package }}/pyproject.toml" ]; then
+            echo "::error::Package directory not found: packages/${{ steps.tag.outputs.package }}"
+            exit 1
+          fi
+
+      - name: Validate version consistency
+        run: |
+          TOML_VERSION=$(python -c "
+          import tomllib
+          with open('packages/${{ steps.tag.outputs.package }}/pyproject.toml', 'rb') as f:
+              data = tomllib.load(f)
+          print(data['project']['version'])
+          ")
+          if [ "$TOML_VERSION" != "${{ steps.tag.outputs.version }}" ]; then
+            echo "::error::Tag version (${{ steps.tag.outputs.version }}) does not match pyproject.toml version ($TOML_VERSION)"
+            exit 1
+          fi
+
+      - name: Lint
+        run: |
+          uv run ruff check packages/${{ steps.tag.outputs.package }}/
+          uv run ruff format --check packages/${{ steps.tag.outputs.package }}/
+
+      - name: Type-check
+        run: uv run basedpyright packages/${{ steps.tag.outputs.package }}/src/
+
+      - name: Test
+        run: uv run pytest packages/${{ steps.tag.outputs.package }}/tests/ -x -q
+
+      - name: Build wheel and sdist
+        run: |
+          uv build --package ${{ steps.tag.outputs.package }} \
+            --out-dir packages/${{ steps.tag.outputs.package }}/dist
+
+      - name: Generate SBOM
+        run: |
+          uv export \
+            --package ${{ steps.tag.outputs.package }} \
+            --no-hashes --no-header --frozen | \
+          uv run cyclonedx-py requirements \
+            --pyproject packages/${{ steps.tag.outputs.package }}/pyproject.toml \
+            --mc-type library \
+            --of JSON \
+            -o packages/${{ steps.tag.outputs.package }}/dist/${{ steps.tag.outputs.package }}-sbom.json -
+
+      - name: Install Grype
+        run: |
+          curl -sSfL \
+            https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Run Grype scan
+        id: grype
+        continue-on-error: true
+        run: |
+          grype \
+            packages/${{ steps.tag.outputs.package }}/dist/*.whl \
+            -o json \
+            > packages/${{ steps.tag.outputs.package }}/dist/${{ steps.tag.outputs.package }}-grype.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSETS=(
+            packages/${{ steps.tag.outputs.package }}/dist/*.whl
+            packages/${{ steps.tag.outputs.package }}/dist/*.tar.gz
+            packages/${{ steps.tag.outputs.package }}/dist/${{ steps.tag.outputs.package }}-sbom.json
+          )
+          GRYPE_REPORT="packages/${{ steps.tag.outputs.package }}/dist/${{ steps.tag.outputs.package }}-grype.json"
+          if [ -f "$GRYPE_REPORT" ]; then
+            ASSETS+=("$GRYPE_REPORT")
+          fi
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --title "${{ steps.tag.outputs.package }} v${{ steps.tag.outputs.version }}" \
+            --generate-notes \
+            "${ASSETS[@]}"
+
+  install-validation:
+    runs-on: ubuntu-latest
+    needs: build-release
+    steps:
+      - name: Parse tag
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          PACKAGE=${TAG%/v*}
+          MODULE=${PACKAGE//-/_}
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "module=$MODULE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download wheel from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo ${{ github.repository }} \
+            --pattern "*.whl" \
+            --dir /tmp/wheels
+
+      - name: Validate install and import
+        run: |
+          python -m venv /tmp/install-validation
+          source /tmp/install-validation/bin/activate
+          pip install /tmp/wheels/*.whl
+          python -c "import ${{ steps.tag.outputs.module }}; print('Import OK:', '${{ steps.tag.outputs.module }}')"
