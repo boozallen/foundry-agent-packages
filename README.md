@@ -58,7 +58,7 @@ just build foundry-agent-core         # build a single wheel
 | Run the daily developer loop | [Local development](docs/foundry/getting-started/local-development.md) |
 | Understand the codebase (layout, packages, conventions) | [AGENTS.md](AGENTS.md) |
 | See per-package summaries | [Packages](docs/foundry/packages/index.md) |
-| Consume these packages from a downstream repo | [Adopting](docs/foundry/releases/adopting.md) |
+| Consume these packages from a downstream repo | [Consuming these packages](#consuming-these-packages) |
 | Understand the security posture and STIG checklists | Each package's `security/stig_checklist.json` |
 | Contribute changes | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
@@ -69,12 +69,54 @@ internal index (no public PyPI yet).
 
 - PRs to `develop` → CI runs (lint, type-check, test, dry-run build, bandit narrow set)
 - PRs to `main` → release validation runs
-- Tag a release on `main` → builds wheels + Syft SBOM + Grype scan per
+- Tag a release on `main` → builds a wheel, an sdist, and a CycloneDX SBOM per
   changed package and attaches them to the GitHub Release
 
-See [docs/foundry/releases/release-channels.md](docs/foundry/releases/release-channels.md)
-for internal RC/dev publishing and [docs/foundry/releases/adopting.md](docs/foundry/releases/adopting.md)
-for the adopter flow.
+Syft and Grype also run on pull requests, but their output is advisory CI
+output — it is not attached to a release.
+
+## Consuming these packages
+
+Each tagged release attaches, for every package that changed at that tag:
+
+| Asset | Example |
+|---|---|
+| Wheel | `foundry_agent_core-1.0.0-py3-none-any.whl` |
+| Source distribution | `foundry_agent_core-1.0.0.tar.gz` |
+| CycloneDX SBOM | `foundry-agent-core-sbom.json` |
+
+Tags are per-package and monotonic — a typical tag is
+`foundry-agent-core/v1.0.0`, and an existing version is never re-published.
+
+Download the assets and host them in your own PyPI-compatible index:
+
+```bash
+gh release download foundry-agent-core/v1.0.0 \
+  --repo boozallen/foundry-agent-packages \
+  --pattern '*.whl' --pattern '*sbom*'
+```
+
+Then point `uv` at that index from the downstream project:
+
+```toml
+# pyproject.toml
+[[tool.uv.index]]
+name = "internal"
+url = "https://<your-index>/simple"
+explicit = true
+
+[tool.uv.sources]
+foundry-agent-core = { index = "internal" }
+```
+
+```bash
+uv add foundry-agent-core
+```
+
+Inspect the SBOM against your supply-chain policy before promoting a release
+into a production index. The supported pattern is "fetch the artifacts, host
+them on your side, pin against your index" — we do not maintain mirror
+metadata, sign release artifacts, or guarantee URL stability for old releases.
 
 ## License
 

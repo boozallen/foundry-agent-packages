@@ -56,5 +56,6 @@ advisory use during package development.
 
 These are library APIs — changes ripple downstream. For anything non-trivial
 (new package, breaking signature change, new middleware), it's worth writing
-a proposal first. See [Spec-Driven Extensions with OpenSpec](/docs/guides/spec-driven-extensions)
+a proposal first. See
+[Spec-Driven Changes via OpenSpec](../../AGENTS.md#spec-driven-changes-via-openspec-opt-in)
 for the workflow we use.
