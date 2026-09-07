@@ -79,3 +79,5 @@ for the adopter flow.
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Optional cross-conversation memory: [Hindsight composition guide](docs/foundry/memory/hindsight.md).

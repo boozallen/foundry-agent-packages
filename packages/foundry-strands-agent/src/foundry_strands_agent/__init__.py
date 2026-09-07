@@ -26,6 +26,7 @@ from foundry_strands_agent.lifecycle import (
     RetryContext,
     RetryPolicy,
 )
+from foundry_strands_agent.memory import HindsightMemoryConfig, HindsightMemoryProvider, MemoryToolProvider
 from foundry_strands_agent.orchestrator import QueryOrchestrator
 from foundry_strands_agent.protocols import AgentFactory, AgentToolRegistry, ChatHistoryManager
 from foundry_strands_agent.registry import AgentToolRegistryManager
@@ -48,6 +49,9 @@ __all__ = [
     "ExecutionContext",
     "ExecutionStrategy",
     "ModelGuardrailConfig",
+    "MemoryToolProvider",
+    "HindsightMemoryConfig",
+    "HindsightMemoryProvider",
     "QueryOrchestrator",
     "RequestLifecycleManager",
     "RetryContext",

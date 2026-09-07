@@ -27,10 +27,10 @@
     ],
     "total_findings": 286,
     "status_summary": {
-      "non_compliant": 36,
-      "not_applicable": 175,
-      "needs_human_review": 59,
-      "meets_requirement": 16
+      "non_compliant": 33,
+      "not_applicable": 173,
+      "needs_human_review": 61,
+      "meets_requirement": 19
     },
     "severity_summary": {
       "medium": 230,
@@ -692,8 +692,8 @@
       "severity": "high",
       "title": "The application must enforce approved authorizations for logical access to information and system resources in accordance with applicable access control policies.",
       "status": "needs_human_review",
-      "finding_details": "This V-ID is outside the scope of automated code analysis for the crypto domain. Manual review required.",
-      "comments": "",
+      "finding_details": "Optional memory tools bind to a configured bank, but deployments must verify authenticated principal-to-bank authorization and service credentials. Code-level scope syntax validation is not authorization.",
+      "comments": "2026-09-07 optional memory review: Optional Hindsight providers bind tools to an application-authorized bank; bank_id is not a model argument. Adopters must authorize bank selection and avoid a shared singleton across unauthorized tenants. Syntax validation alone does not enforce authorization. Evidence: src/foundry_strands_agent/memory.py, tests/test_memory_provider.py, docs/foundry/memory/hindsight.md.",
       "severity_override": "",
       "severity_justification": "",
       "domains_assessed": [
@@ -725,9 +725,9 @@
       "stig_id": "SRG-APP-000038",
       "severity": "medium",
       "title": "The application must enforce approved authorizations for controlling the flow of information within the system based on organization-defined information flow control policies.",
-      "status": "not_applicable",
-      "finding_details": "Capability not present: authorization",
-      "comments": "",
+      "status": "needs_human_review",
+      "finding_details": "Optional remote memory introduces information flow across conversations. Deployments must verify service-side bank authorization, retained-data policy, and handling of untrusted recalled content.",
+      "comments": "2026-09-07 optional memory review: Hindsight retention is explicitly disabled by default. Recall/reflect results remain untrusted tool data. Adopters own data minimization, retention, deletion, prompt-injection policy, and service-side access control. Evidence: src/foundry_strands_agent/memory.py, tests/test_memory_provider.py, docs/foundry/memory/hindsight.md.",
       "severity_override": "",
       "severity_justification": "",
       "domains_assessed": [
@@ -3449,9 +3449,9 @@
       "stig_id": "SRG-APP-000428",
       "severity": "high",
       "title": "The application must implement approved cryptographic mechanisms to prevent unauthorized modification of organization-defined information at rest on organization-defined information system components.",
-      "status": "meets_requirement",
-      "finding_details": "EncryptedFileSessionManager in encrypted_session.py applies AES-256-GCM via cryptography library to all file-backed session writes. GCM authentication tag provides integrity verification on every read. Tampered data is rejected with InvalidTag error.",
-      "comments": "File-backed session state integrity protected via AES-256-GCM (AEAD) in src/foundry_strands_agent/encrypted_session.py. EncryptedFileSessionManager overrides _write_file to encrypt and _read_file to decrypt+verify. GCM tag authenticates ciphertext integrity on every read. Key from SESSION_ENCRYPTION_KEY env var (64-char hex, 32 bytes). S3 path relies on bucket-level SSE-KMS for integrity.",
+      "status": "needs_human_review",
+      "finding_details": "Encrypted file sessions retain AES-256-GCM integrity protection. Optional remote Hindsight banks require separate deployment verification of encryption and integrity at rest; local session protection does not cover remote memory.",
+      "comments": "File-backed session state integrity protected via AES-256-GCM (AEAD) in src/foundry_strands_agent/encrypted_session.py. EncryptedFileSessionManager overrides _write_file to encrypt and _read_file to decrypt+verify. GCM tag authenticates ciphertext integrity on every read. Key from SESSION_ENCRYPTION_KEY env var (64-char hex, 32 bytes). S3 path relies on bucket-level SSE-KMS for integrity.\n\n2026-09-07 optional memory review: Hindsight memory is stored remotely; local encrypted chat sessions do not protect remote banks. Service encryption at rest, credential management, and transport security remain deployment responsibilities. Evidence: src/foundry_strands_agent/memory.py, tests/test_memory_provider.py, docs/foundry/memory/hindsight.md.",
       "severity_override": "",
       "severity_justification": "",
       "domains_assessed": [
@@ -3827,9 +3827,9 @@
       "stig_id": "SRG-APP-000266",
       "severity": "medium",
       "title": "The application must generate error messages that provide information necessary for corrective actions without revealing information that could be exploited by adversaries.",
-      "status": "not_applicable",
-      "finding_details": "Capability not present: authorization",
-      "comments": "",
+      "status": "needs_human_review",
+      "finding_details": "Configured provider collection errors are generic. Official hindsight-strands runtime tools include upstream error details in exceptions and logs; deployment redaction before model/caller exposure needs human verification.",
+      "comments": "2026-09-07 optional memory review: Provider collection errors use a generic AgentCreationError with error type only. Official hindsight-strands 0.1.3 runtime tools include upstream exception details in errors/logs; adopters must redact these before exposing them to models or callers. No new compliance claim is made. Evidence: src/foundry_strands_agent/memory.py, tests/test_memory_provider.py, docs/foundry/memory/hindsight.md.",
       "severity_override": "",
       "severity_justification": "",
       "domains_assessed": [

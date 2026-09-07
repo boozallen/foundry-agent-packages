@@ -1,7 +1,7 @@
 # foundry-strands-agent
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 AWS Strands SDK adapter that implements the `foundry-agent-core`
@@ -82,3 +82,10 @@ See [`security/stig_checklist.json`](security/stig_checklist.json) for the full 
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Optional shared memory
+
+Compose a `MemoryToolProvider` into `StrandsAgentFactory` to share authorized memory
+across conversations. The optional `hindsight` extra uses the official Hindsight
+integration with writes disabled by default. Existing Bedrock memory is preserved.
+See the [configuration, trust boundaries, and live example](../../docs/foundry/memory/hindsight.md).

@@ -13,6 +13,8 @@ Per-package versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `foundry-strands-agent` 1.1.0: optional Hindsight memory providers, preserving Bedrock memory; includes a live example and scope/failure-path verification.
+
 ## [1.0.0] - 2026-06-29
 
 Initial public release.
