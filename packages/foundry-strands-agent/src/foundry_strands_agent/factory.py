@@ -32,6 +32,7 @@ from foundry_agent_core import AgentCreationError, DependencyContainer, External
 from foundry_strands_agent.config.models import AgentConfig, StrandsSessionManagerType
 from foundry_strands_agent.encrypted_session import EncryptedFileSessionManager
 from foundry_strands_agent.encryption import load_encryption_key
+from foundry_strands_agent.memory import MemoryToolProvider
 from foundry_strands_agent.protocols import (
     AgentFactory,
     AgentToolRegistry,
@@ -212,6 +213,7 @@ class StrandsAgentFactory(AgentFactory):
         container: DependencyContainer,
         session_manager_factories: dict[str, Any] | None = None,
         model_provider_factories: dict[str, Any] | None = None,
+        memory_provider: MemoryToolProvider | None = None,
     ) -> None:
         """Initialize agent factory with dependency container and optional registries.
 
@@ -221,11 +223,14 @@ class StrandsAgentFactory(AgentFactory):
                 Defaults to built-in file and S3 factories.
             model_provider_factories: Registry of model provider factory functions keyed by provider string.
                 Defaults to built-in bedrock, ollama, and llamacpp factories.
+            memory_provider: Optional scope-bound tools supplied by the composition root.
+                The caller owns provider clients and their shutdown.
         """
         self._container = container
         self._config: AgentConfig | None = None
         self._session_manager_factories = session_manager_factories or DEFAULT_SESSION_MANAGER_FACTORIES
         self._model_provider_factories = model_provider_factories or DEFAULT_MODEL_PROVIDER_FACTORIES
+        self._memory_provider = memory_provider
 
     async def create_agent(
         self,
@@ -309,6 +314,8 @@ class StrandsAgentFactory(AgentFactory):
                     logger.warning("A2A agent discovery timed out after %s seconds", timeout_seconds)
                 except Exception as e:
                     logger.warning("Failed to eagerly discover A2A agents: %s", e)
+
+            tools.extend(self._get_memory_tools())
 
             # Add memory tool if memory is enabled and knowledge_base_id is configured
             if base_config.enable_memory and base_config.knowledge_base_id:
@@ -402,6 +409,18 @@ class StrandsAgentFactory(AgentFactory):
                 f"Failed to create Strands Agent: {e}",
                 context={"error": str(e), "error_type": type(e).__name__},
             ) from e
+
+    def _get_memory_tools(self) -> list[Any]:
+        """Load configured tools, failing closed if the provider fails."""
+        if self._memory_provider is None:
+            return []
+        try:
+            return list(self._memory_provider.get_tools())
+        except Exception as error:
+            raise AgentCreationError(
+                "Failed to load configured memory provider",
+                context={"error_type": type(error).__name__},
+            ) from error
 
     async def _collect_mcp_clients(self, mcp_servers: list[dict[str, Any]]) -> list[MCPClient]:
         """Collect MCP clients from MCP servers.
@@ -606,6 +625,8 @@ class StrandsAgentFactory(AgentFactory):
                     "Added A2A client tools",
                     extra={"a2a_tools_count": len(a2a_provider.tools)},
                 )
+
+            tools.extend(self._get_memory_tools())
 
             # Create conversation manager with configured window size
             conversation_manager = SlidingWindowConversationManager(

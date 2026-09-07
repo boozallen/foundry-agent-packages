@@ -1,0 +1,47 @@
+name: Memory provider
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'packages/foundry-strands-agent/**'
+      - 'examples/hindsight_memory.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/memory-provider.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        run: pip install uv
+      - name: Install without optional memory dependencies
+        run: uv sync --locked --all-packages --all-groups
+      - name: Verify optional import boundary
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.util
+          import foundry_strands_agent
+          assert importlib.util.find_spec('hindsight_strands') is None
+          assert importlib.util.find_spec('hindsight_client') is None
+          PY
+      - name: Install optional integration
+        run: uv sync --locked --all-packages --all-groups --extra hindsight
+      - name: Quality checks
+        run: |
+          uv run --no-sync ruff check packages/*/src packages/*/tests examples
+          uv run --no-sync ruff format --check packages/*/src packages/*/tests examples
+          uv run --no-sync bandit -c pyproject.toml -r packages -t B602,B603,B605,B607
+          uv run --no-sync basedpyright
+      - name: Regression tests with official tools and mocked clients
+        run: uv run --no-sync pytest packages/*/tests -q
+      - name: Build
+        run: uv build --package foundry-strands-agent
