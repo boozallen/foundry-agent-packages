@@ -9,7 +9,7 @@ Clone the monorepo and sync all dependencies:
 ```bash
 git clone https://github.com/boozallen/foundry-agent-packages
 cd foundry-agent-packages
-uv sync --all-groups
+uv sync --all-packages --all-groups
 ```
 
 ## Running Tests

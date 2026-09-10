@@ -12,6 +12,18 @@ Get a Strands agent running end-to-end in under five minutes.
     ollama serve
     ollama pull llama3.1
     ```
+- **`SESSION_ENCRYPTION_KEY`** — every example below passes a `session_id`,
+  which defaults chat history to file-backed storage (encrypted at rest, AES-256-GCM,
+  under `$TMPDIR/strands/sessions/` unless `session_storage_dir` is set). A
+  64-character hex string (32 bytes):
+  ```bash
+  export SESSION_ENCRYPTION_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  ```
+  Generate this once per shell session and reuse it - regenerating it on a
+  later run raises `cryptography.exceptions.InvalidTag` when decrypting a
+  session file an earlier run already wrote under the same `session_id` with
+  the old key. Recover either by exporting the same key again or by deleting
+  the stale file under `$TMPDIR/strands/sessions/`.
 
 ## Install
 
@@ -31,34 +43,33 @@ export AWS_DEFAULT_REGION=us-east-1
 ```python
 import asyncio
 from foundry_strands_agent import (
-    AgentService,
     StrandsAgentConfig,
-    StrandsAgentFactory,
-    AgentToolRegistryManager,
-    QueryOrchestrator,
-    DefaultResponseProcessor,
-    ChatHistorian,
     create_agent_service,
+    create_default_container,
 )
-from foundry_agent_core import DependencyContainer, AgentRequest
+from foundry_agent_core import AgentRequest
 
 async def main():
     config = StrandsAgentConfig()  # provider: bedrock, model: claude-sonnet-4
-    container = DependencyContainer()
-    container.register_instance(StrandsAgentConfig, config)
+    container = create_default_container(config)
 
     service = create_agent_service(container)
 
     async with service.service_lifecycle():
         request = AgentRequest(session_id="my-session", query="What is 2 + 2?")
         response = await service.process_query(request)
-        print(response.response_text)
+        print(response.content)
 
 asyncio.run(main())
 ```
 
-`create_agent_service` resolves all protocol dependencies from the container.
-See [Extending](extending.md) for manual wiring.
+`create_default_container` registers this package's default implementation for
+every protocol `create_agent_service` resolves — `AgentFactory`,
+`AgentToolRegistry`, `QueryProcessor`, `ChatHistoryManager`, and
+`ResponseProcessor` — plus the config instance you pass it. Swap any one of
+them with the matching keyword argument (for example
+`create_default_container(config, query_processor=my_processor)`). See
+[Extending](extending.md) if you need to wire the components yourself.
 
 ## Option B — Ollama
 
@@ -78,11 +89,14 @@ config = StrandsAgentConfig(
 
 ## Send a Streaming Query
 
-`process_query_stream` yields token and result events as an async generator:
+`process_query_stream` yields token and result events as an async generator.
+This replaces the `response = await service.process_query(request)` line
+inside the `main()` function from Option A or B above — it is not a
+standalone script, since it reuses the same `service`:
 
 ```python
 async with service.service_lifecycle():
-    request = AgentRequest(session_id="demo", query="Explain recursion briefly.")
+    request = AgentRequest(session_id="demo-session-02", query="Explain recursion briefly.")
 
     async for event in service.process_query_stream(request):
         if event["type"] == "token":

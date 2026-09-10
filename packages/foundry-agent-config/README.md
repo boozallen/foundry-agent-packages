@@ -1,7 +1,6 @@
 # foundry-agent-config
 
-![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 YAML configuration loader with environment-variable overrides for
@@ -11,11 +10,12 @@ against a user-supplied `BaseModel`.
 
 ## Install
 
-```bash
-uv add foundry-agent-config
-# or
-pip install foundry-agent-config
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+for the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 ## Quickstart
 
@@ -48,13 +48,11 @@ config = load_config(AppConfig, Path("config.yaml"), env_prefix="MYAPP")
 The loader bounds YAML file size, environment-variable size, and key
 counts to prevent resource-exhaustion attacks (DISA STIG V-222612).
 Command-execution sinks are prohibited and gated by Ruff `S6xx` rules
-plus `bandit` narrow-set in CI (DISA STIG V-222604). See
-[`security/stig_checklist.json`](security/stig_checklist.json).
+plus `bandit` narrow-set (DISA STIG V-222604).
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [STIG checklist](security/stig_checklist.json)
 - [Repo docs](../../docs/foundry/index.md)
 
 ## License

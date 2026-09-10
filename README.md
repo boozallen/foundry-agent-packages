@@ -1,14 +1,16 @@
 # foundry-agent-packages
 
-![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Project Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
+![Not Production Ready](https://img.shields.io/badge/production-not%20ready-red)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
+
+> **ALPHA RELEASE - NOT PRODUCTION READY.** APIs may change without notice.
 
 A uv-workspace monorepo of the shared Python libraries that Foundry-built
 agents install and extend. Each package is independently versioned and
 ships as a wheel attached to a GitHub Release; adopters host the wheels
 in their own internal index. Composition roots like `strands-base-agent`
-wire these libraries into a runnable service — they do not re-implement
+wire these libraries into a runnable service - they do not re-implement
 what lives here.
 
 ## Packages
@@ -18,7 +20,7 @@ what lives here.
 | [`foundry-agent-core`](packages/foundry-agent-core) | DI container, protocols, types, exceptions, lifecycle | _(none)_ |
 | [`foundry-agent-config`](packages/foundry-agent-config) | YAML loader with env-var overrides, bounded input controls | _(none)_ |
 | [`foundry-agent-fastapi`](packages/foundry-agent-fastapi) | CORS / error / logging middleware, request models, health router | `foundry-agent-core` |
-| [`foundry-strands-agent`](packages/foundry-strands-agent) | AWS Strands SDK adapter — backend, factory, orchestrator, tool loader | `foundry-agent-core`, `foundry-agent-config` |
+| [`foundry-strands-agent`](packages/foundry-strands-agent) | AWS Strands SDK adapter - backend, factory, orchestrator, tool loader | `foundry-agent-core`, `foundry-agent-config` |
 
 ```
 foundry-agent-core ◄── foundry-agent-fastapi
@@ -38,9 +40,14 @@ foundry-agent-config ───────────┘
 
 ```bash
 just setup           # uv sync + pre-commit install
-just check           # ruff + bandit narrow set + format check + basedpyright
-just test            # full test suite across all packages
+just check           # full gate: ruff lint + format check + basedpyright + tests
+just test            # unit + integration tiers across all packages, looped per package
+just test-unit       # the `tests/unit/` tier only
+just test-integration # the `tests/integration/` tier only; 0 collected is not a failure
 ```
+
+HTML coverage is always on, written per package to `htmlcov/<module>/index.html`
+from each package's pytest `addopts`; there is no separate coverage recipe.
 
 Per-package commands:
 
@@ -49,6 +56,10 @@ just test-pkg foundry-agent-core      # test a single package
 just check-pkg foundry-agent-core     # lint + format + type-check + test, one package
 just build foundry-agent-core         # build a single wheel
 ```
+
+`just --list` shows the full recipe surface, grouped as *Setup & Dependencies*,
+*Code Quality*, *Testing*, and *Building & Release* - the same grouping and shared
+recipe names used by the sibling `temporal-packages` repo.
 
 ## Documentation
 
@@ -59,12 +70,11 @@ just build foundry-agent-core         # build a single wheel
 | Understand the codebase (layout, packages, conventions) | [AGENTS.md](AGENTS.md) |
 | See per-package summaries | [Packages](docs/foundry/packages/index.md) |
 | Consume these packages from a downstream repo | [Adopting](docs/foundry/releases/adopting.md) |
-| Understand the security posture and STIG checklists | Each package's `security/stig_checklist.json` |
 | Contribute changes | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Release model
 
-Releases ship as GitHub Releases — adopters host the wheels in their own
+Releases ship as GitHub Releases - adopters host the wheels in their own
 internal index (no public PyPI yet).
 
 - PRs to `develop` → CI runs (lint, type-check, test, dry-run build, bandit narrow set)
@@ -78,4 +88,4 @@ for the adopter flow.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE).

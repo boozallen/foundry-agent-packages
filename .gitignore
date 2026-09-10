@@ -46,3 +46,8 @@ Thumbs.db
 *.whl
 *.tar.gz
 .memsearch/
+
+# foundry-stigkit generated output (assessment JSON and decision log are tracked)
+**/security/*.html
+**/security/*.bak
+/.foundry-qakit

@@ -31,26 +31,41 @@ This is a Python monorepo managed with [uv](https://docs.astral.sh/uv/) and
 Install all dependencies:
 
 ```bash
-uv sync --all-groups
+uv sync --all-packages --all-groups
 ```
 
 Verify your setup:
 
 ```bash
 just check
-just test
 ```
 
 ### Common Commands
 
 | Command | Description |
 |---------|-------------|
-| `just install` | Install all workspace packages |
-| `just check` | Run lint, format check, and type check |
-| `just test` | Run all tests |
+| `just sync` | Sync the workspace venv with the lockfile |
+| `just setup` | Sync workspace + pre-commit hooks |
+| `just lint` | Run ruff lint + the bandit command-injection sink set across all packages |
 | `just lint-fix` | Auto-fix linting issues |
+| `just format` | Check formatting across all packages |
 | `just format-fix` | Auto-fix formatting |
-| `just type-check` | Run type checking (pyright) |
+| `just type-check` | Run basedpyright type checking |
+| `just check` | Full gate: `lint` + `format` + `type-check` + `test` |
+| `just test` | Both tiers for every package (per-package loop + summary table) |
+| `just test-unit` | The `tests/unit/` tier only |
+| `just test-integration` | The `tests/integration/` tier only; 0 collected is reported as SKIP |
+| `just test-pkg <pkg>` | Run one package's full suite |
+| `just dead-code` | Advisory vulture scan (not gated) |
+
+`just --list` is the full list. Running `just test` from inside
+`packages/<pkg>/` tests only that package, and `just lint` there runs the same
+ruff + bandit pair scoped to that package.
+
+Tests are split by directory, not by marker: `packages/<pkg>/tests/unit/` and
+`packages/<pkg>/tests/integration/`. HTML coverage is always on, written to
+`htmlcov/<module>/index.html` from each package's pytest `addopts`, so there is
+no separate coverage recipe.
 
 ## Making Changes
 
@@ -89,7 +104,7 @@ just test
 1. Open a pull request from your fork's branch to `upstream/develop`
 2. Fill out the PR template checklist
 3. Wait for CI checks to pass
-4. A maintainer will review your PR — only designated maintainers have merge
+4. A maintainer will review your PR - only designated maintainers have merge
    rights
 
 ### What to Expect
@@ -108,7 +123,7 @@ This project uses a maintainer-controlled merge model:
 - At least one CODEOWNERS review is required
 - All CI checks must pass before merge
 - Stale approvals are dismissed when new commits are pushed
-- No bypass is allowed — maintainers follow the same review process
+- No bypass is allowed - maintainers follow the same review process
 
 ## Reporting Security Issues
 

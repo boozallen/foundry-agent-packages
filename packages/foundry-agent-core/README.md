@@ -1,7 +1,6 @@
 # foundry-agent-core
 
-![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Framework-agnostic agent infrastructure: dependency-injection container,
@@ -10,11 +9,12 @@ lifecycle primitives. Zero coupling to any specific agent framework.
 
 ## Install
 
-```bash
-uv add foundry-agent-core
-# or
-pip install foundry-agent-core
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+for the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 ## Quickstart
 
@@ -45,14 +45,11 @@ request = AgentRequest(session_id="user-session-01", query="Hello")
 
 Session IDs in `AgentRequest`/`AgentResponse` must match
 `^[A-Za-z0-9_-]{8,128}$` (DISA STIG V-222609). Invalid IDs raise
-`ValidationError` at model construction. See
-[`security/stig_checklist.json`](security/stig_checklist.json) for the
-full control list.
+`ValidationError` at model construction.
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [STIG checklist](security/stig_checklist.json)
 - [Repo docs](../../docs/foundry/index.md)
 
 ## License

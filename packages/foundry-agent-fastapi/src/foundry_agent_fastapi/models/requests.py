@@ -11,11 +11,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from foundry_agent_core import _MAX_DICT_BYTES, _MAX_DICT_KEY_LEN, _MAX_DICT_KEYS, _MAX_QUERY_LEN, _MAX_RESULTS
+
 _MAX_SESSION_ID_LEN = 128
-_MAX_QUERY_LEN = 8192
-_MAX_CONTEXT_KEYS = 32
-_MAX_CONTEXT_KEY_LEN = 128
-_MAX_CONTEXT_BYTES = 16384
+_MAX_CONTEXT_KEYS = _MAX_DICT_KEYS
+_MAX_CONTEXT_KEY_LEN = _MAX_DICT_KEY_LEN
+_MAX_CONTEXT_BYTES = _MAX_DICT_BYTES
 
 
 class QueryAPIRequest(BaseModel):
@@ -74,7 +75,7 @@ class QueryAPIRequest(BaseModel):
         default=10,
         description="Maximum number of results to return",
         ge=1,
-        le=100,
+        le=_MAX_RESULTS,
         examples=[5, 10, 25],
     )
 

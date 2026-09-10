@@ -524,10 +524,7 @@ class AgentService:
                     "Tool registry is not initialized",
                     context={"service_state": "invalid_tool_registry"},
                 )
-            await asyncio.to_thread(
-                self._tool_registry.load_tools_from_directory,
-                directory_path,
-            )
+            await self._tool_registry.load_tools_from_directory(directory_path)
 
             logger.info(
                 "Tools loaded successfully from directory",

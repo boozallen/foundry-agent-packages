@@ -26,14 +26,17 @@ class AgentToolRegistryManager:
     tool registry with agent-specific features.
     """
 
-    def __init__(self, container: DependencyContainer) -> None:
+    def __init__(self, container: DependencyContainer, tools_dir: str | None = None) -> None:
         """Initialize tool registry manager with dependency container.
 
         Args:
             container: Dependency injection container for infrastructure components
+            tools_dir: Tools root that directory loading is confined to
+                (``StrandsAgentConfig.tools_dir``). Defaults to the loader's
+                default root when not supplied.
         """
         self._container = container
-        self._registry = create_tool_registry(container)
+        self._registry = create_tool_registry(container, tools_dir)
 
     def register_tool(
         self,
@@ -165,14 +168,21 @@ class AgentToolRegistryManager:
             )
             return []
 
-    def load_tools_from_directory(self, directory_path: str) -> None:
+    async def load_tools_from_directory(self, directory_path: str) -> None:
         """Load tools from a directory following Strands hot-reload pattern.
+
+        Delegates to the audited loader for every file, so the directory must be
+        contained in the configured tools root and each file must pass the AST
+        security analysis. A file that fails analysis is logged with its reason,
+        named in a summary warning, and excluded; the remaining valid tools still
+        load. The call fails only when no tool loaded at all.
 
         Args:
             directory_path: Path to directory containing tool definitions
 
         Raises:
-            ToolLoadingError: If tool loading fails
+            ToolLoadingError: If the directory is outside the configured tools
+                root, or if no tool could be loaded from it
         """
         try:
             logger.info(
@@ -181,7 +191,7 @@ class AgentToolRegistryManager:
             )
 
             # Use underlying registry to load tools
-            self._registry.load_tools_from_directory(directory_path)
+            await self._registry.load_tools_from_directory(directory_path)
 
             logger.info(
                 "Tools loaded successfully from directory",
@@ -386,13 +396,16 @@ class AgentToolRegistryManager:
 
 def create_agent_tool_registry(
     container: DependencyContainer,
+    tools_dir: str | None = None,
 ) -> AgentToolRegistryManager:
     """Factory function to create AgentToolRegistryManager instance.
 
     Args:
         container: Dependency injection container
+        tools_dir: Tools root that directory loading is confined to
+            (``StrandsAgentConfig.tools_dir``)
 
     Returns:
         Configured AgentToolRegistryManager implementation
     """
-    return AgentToolRegistryManager(container)
+    return AgentToolRegistryManager(container, tools_dir)

@@ -9,6 +9,7 @@ verification enabled by default. Satisfies STIG V-222596 (CCI-002418).
 import logging
 import os
 import ssl
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -21,6 +22,9 @@ def create_tls_context() -> ssl.SSLContext:
 
     Set FOUNDRY_TLS_VERIFY=false to disable cert verification for dev
     environments with self-signed certs. The TLS 1.2 floor is always enforced.
+
+    Set FOUNDRY_TLS_CLIENT_CERTFILE and FOUNDRY_TLS_CLIENT_KEYFILE to present
+    a client certificate for outbound mTLS connections.
     """
     ctx = ssl.create_default_context()
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -31,7 +35,38 @@ def create_tls_context() -> ssl.SSLContext:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
+    _load_client_cert(ctx)
+
     return ctx
+
+
+def _load_client_cert(ctx: ssl.SSLContext) -> None:
+    """Load client certificate chain if both env vars are configured."""
+    client_certfile = os.getenv("FOUNDRY_TLS_CLIENT_CERTFILE")
+    client_keyfile = os.getenv("FOUNDRY_TLS_CLIENT_KEYFILE")
+
+    if client_certfile and client_keyfile:
+        cert_path = Path(client_certfile)
+        key_path = Path(client_keyfile)
+
+        if not cert_path.is_file():
+            msg = f"FOUNDRY_TLS_CLIENT_CERTFILE not found: {client_certfile}"
+            raise FileNotFoundError(msg)
+        if not key_path.is_file():
+            msg = f"FOUNDRY_TLS_CLIENT_KEYFILE not found: {client_keyfile}"
+            raise FileNotFoundError(msg)
+
+        ctx.load_cert_chain(certfile=client_certfile, keyfile=client_keyfile)
+        logger.info("Loaded client certificate for outbound mTLS: %s", client_certfile)
+
+    elif client_certfile or client_keyfile:
+        set_var = "FOUNDRY_TLS_CLIENT_CERTFILE" if client_certfile else "FOUNDRY_TLS_CLIENT_KEYFILE"
+        missing_var = "FOUNDRY_TLS_CLIENT_KEYFILE" if client_certfile else "FOUNDRY_TLS_CLIENT_CERTFILE"
+        logger.warning(
+            "Incomplete outbound mTLS config: %s is set but %s is not. Client certificate not loaded.",
+            set_var,
+            missing_var,
+        )
 
 
 def create_mcp_http_client(

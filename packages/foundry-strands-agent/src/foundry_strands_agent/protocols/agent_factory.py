@@ -48,14 +48,20 @@ class AgentToolRegistry(Protocol):
         """
 
     @abstractmethod
-    def load_tools_from_directory(self, directory_path: str) -> None:
+    async def load_tools_from_directory(self, directory_path: str) -> None:
         """Load tools from a directory following Strands hot-reload pattern.
+
+        The directory must be contained in the configured tools root, and every
+        file in it is loaded through the audited loader, so containment and the
+        AST security analysis apply to each one. A file the loader rejects is
+        reported and excluded rather than executed, and loading continues.
 
         Args:
             directory_path: Path to directory containing tool definitions
 
         Raises:
-            ToolLoadingError: If tool loading fails
+            ToolLoadingError: If the directory is outside the configured tools
+                root, or if no tool could be loaded from it
         """
 
     @abstractmethod

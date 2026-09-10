@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 # Packages
@@ -13,8 +13,8 @@ DI container, protocol definitions, type primitives, exception hierarchy,
 agent lifecycle, masking/redaction helpers. **No runtime dependencies on
 other packages in this repo.**
 
-- [Package docs](./foundry-agent-core/) — install, quickstart, surface, security
-- [CHANGELOG](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-core/CHANGELOG.md)
+- [README](../../../packages/foundry-agent-core/README.md)
+- [CHANGELOG](../../../packages/foundry-agent-core/CHANGELOG.md)
 
 ## `foundry-agent-config`
 
@@ -22,24 +22,24 @@ YAML configuration loader with environment-variable overrides (double-underscore
 nesting), bounded input controls, and Pydantic-based schema validation. **No
 runtime dependencies on other packages in this repo.**
 
-- [Package docs](./foundry-agent-config/) — install, quickstart, surface, security
-- [CHANGELOG](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/CHANGELOG.md)
+- [README](../../../packages/foundry-agent-config/README.md)
+- [CHANGELOG](../../../packages/foundry-agent-config/CHANGELOG.md)
 
 ## `foundry-agent-fastapi`
 
 CORS / error / logging middleware, request/response models, mappers between
 domain types and HTTP DTOs, a health router. **Depends on:** `foundry-agent-core`.
 
-- [Package docs](./foundry-agent-fastapi/) — install, quickstart, surface, security
-- [CHANGELOG](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-fastapi/CHANGELOG.md)
+- [README](../../../packages/foundry-agent-fastapi/README.md)
+- [CHANGELOG](../../../packages/foundry-agent-fastapi/CHANGELOG.md)
 
 ## `foundry-strands-agent`
 
 AWS Strands SDK adapter — `StrandsAgentBackend`, factory, orchestrator, tool
 loader, chat historian. **Depends on:** `foundry-agent-core`, `foundry-agent-config`.
 
-- [Package docs](./foundry-strands-agent/) — install, quickstart, guides, and diagrams for the Strands adapter
-- [CHANGELOG](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/CHANGELOG.md)
+- [README](../../../packages/foundry-strands-agent/README.md)
+- [CHANGELOG](../../../packages/foundry-strands-agent/CHANGELOG.md)
 
 ## Dependency graph
 

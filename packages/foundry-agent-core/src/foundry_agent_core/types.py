@@ -10,16 +10,24 @@ from pydantic import BaseModel, Field, StringConstraints, field_serializer, fiel
 from foundry_agent_core.masking import mask_session_id
 
 # Field bounds (STIG V-222612 / CCI-002824). See
-# openspec/changes/foundry-586-add-pydantic-size-constraints/design.md D1
-# for rationale; values are exported as module-private constants so tests and
-# adapters can reference the canonical limits.
-_MAX_QUERY_LEN = 8192  # 8 KiB
-_MAX_CONTENT_LEN = 131072  # 128 KiB
+# openspec/changes/archive/2026-06-18-foundry-586-add-pydantic-size-constraints/design.md D1
+# for the original rationale,
+# openspec/changes/foundry-783-raise-query-context-limits/design.md for the rationale
+# behind raising _MAX_QUERY_LEN/_MAX_DICT_BYTES to accommodate frontier model context
+# windows, and
+# openspec/changes/foundry-856-consolidate-bound-constants/design.md for why these
+# constants are re-exported from foundry_agent_core's package root (see __init__.py's
+# __all__) rather than only module-private: downstream packages import from there
+# instead of re-declaring their own literals, so raising a bound here takes effect
+# at every layer that checks it.
+_MAX_QUERY_LEN = 2_097_152  # 2 MiB (~524K tokens at ~4:1 char:token ratio)
+_MAX_CONTENT_LEN = 524_288  # 4 * max_tokens ceiling (131,072) at ~4:1 char:token ratio
 _MAX_SESSION_ID_LEN = 128
 _MAX_DICT_KEYS = 32
 _MAX_DICT_KEY_LEN = 128
-_MAX_DICT_BYTES = 16384  # 16 KiB
+_MAX_DICT_BYTES = 4_194_304  # 4 MiB
 _MAX_PROCESSING_TIME_MS = 86_400_000  # 24h
+_MAX_RESULTS = 100  # canonical ceiling for result-count fields (e.g. RAG max_results)
 
 
 _BoundedQuery = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_QUERY_LEN, strip_whitespace=True)]

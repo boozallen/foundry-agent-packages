@@ -62,7 +62,7 @@ class QueryOrchestrator(QueryProcessor):
         self._agent_factory = agent_factory
         self._tool_registry = tool_registry
         self._response_processor = response_processor
-        self._config = StrandsAgentConfig.from_env()
+        self._config = container.resolve(StrandsAgentConfig)
 
     async def process_query(self, request: AgentRequest) -> AgentResponse:
         """Process a complete query from request to response.
@@ -277,7 +277,7 @@ class QueryOrchestrator(QueryProcessor):
                 session_id=request.session_id,
                 query=request.query.strip(),
                 context=request.context,
-                max_results=min(request.max_results, 100),  # Enforce reasonable limit
+                max_results=request.max_results,  # already bounded by QueryRequest's canonical _MAX_RESULTS
                 similarity_threshold=similarity_threshold,
                 timestamp=request.timestamp,
             )

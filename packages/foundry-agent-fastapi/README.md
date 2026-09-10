@@ -1,7 +1,6 @@
 # foundry-agent-fastapi
 
-![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Reusable FastAPI middleware, health-check endpoint, API models, and
@@ -11,11 +10,12 @@ HTTP DTOs to and from domain types.
 
 ## Install
 
-```bash
-uv add foundry-agent-fastapi
-# or
-pip install foundry-agent-fastapi
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+for the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 ## Quickstart
 
@@ -30,13 +30,19 @@ from foundry_agent_fastapi import (
 
 app = FastAPI()
 
-# Order matters — outermost first
-add_request_logging_middleware(app)
-add_error_handling_middleware(app)
-add_cors_middleware(app)
+# Registration order matters: the LAST middleware registered is the outermost.
+add_request_logging_middleware(app)  # innermost — closest to the route handler
+add_error_handling_middleware(app)   # middle
+add_cors_middleware(app)             # outermost — sees the request first
 
 app.include_router(health_router)  # GET /api/v1/health
 ```
+
+Each `add_*_middleware` call inserts at the **front** of Starlette's middleware
+list, and the stack is built by wrapping that list in reverse — so the last
+registration ends up outermost. The outermost middleware sees the request
+first and writes the response last; the innermost runs closest to the route
+handler.
 
 ## What's in the box
 
@@ -55,13 +61,11 @@ CORS is configured via env vars: `STRANDS_CORS_ORIGINS`, `STRANDS_CORS_METHODS`,
 ## Security
 
 `QueryAPIRequest.session_id` is validated against `^[A-Za-z0-9_-]{8,128}$`;
-invalid IDs return HTTP 422 (DISA STIG V-222609). See
-[`security/stig_checklist.json`](security/stig_checklist.json).
+invalid IDs return HTTP 422 (DISA STIG V-222609).
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [STIG checklist](security/stig_checklist.json)
 - [Repo docs](../../docs/foundry/index.md)
 
 ## License

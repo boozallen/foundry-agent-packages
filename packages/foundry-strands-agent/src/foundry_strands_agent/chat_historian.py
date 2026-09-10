@@ -65,14 +65,15 @@ class ChatHistorian(ChatHistoryManager):
     This historian provides chat history management.
     """
 
-    def __init__(self, agent_factory: AgentFactory) -> None:
+    def __init__(self, agent_factory: AgentFactory, config: StrandsAgentConfig) -> None:
         """Initialize chat historian with dependencies.
 
         Args:
             agent_factory: Factory for creating configured agent instances
+            config: Agent configuration
         """
         self._agent_factory = agent_factory
-        self._config = StrandsAgentConfig.from_env()
+        self._config = config
 
     async def get_chat_sessions_history(self, limit: int | None = None, offset: int | None = None) -> list[Session]:
         """Get all chat sessions history with most recent sessions first.
@@ -356,13 +357,14 @@ class ChatHistorian(ChatHistoryManager):
         await self.delete_chat_session_messages_history(session_id)
 
 
-def create_chat_history_manager(agent_factory: AgentFactory) -> ChatHistoryManager:
+def create_chat_history_manager(agent_factory: AgentFactory, config: StrandsAgentConfig) -> ChatHistoryManager:
     """Factory function to create ChatHistorian instance.
 
     Args:
         agent_factory: Factory for creating agents
+        config: Agent configuration
 
     Returns:
         Configured ChatHistorian implementation
     """
-    return ChatHistorian(agent_factory)
+    return ChatHistorian(agent_factory, config)

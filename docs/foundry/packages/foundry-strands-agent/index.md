@@ -1,7 +1,7 @@
 # foundry-strands-agent
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.6.0-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 AWS Strands SDK adapter that implements the `foundry-agent-core`
@@ -15,11 +15,12 @@ protocol-based factory.
 
 ## Install
 
-```bash
-uv add foundry-strands-agent
-# or
-pip install foundry-strands-agent
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 Requires AWS credentials (Bedrock), a running Ollama instance, a
 LlamaCpp server, or a NIMS / OpenAI-compatible endpoint.
@@ -28,13 +29,16 @@ LlamaCpp server, or a NIMS / OpenAI-compatible endpoint.
 
 ```python
 import asyncio
-from foundry_strands_agent import StrandsAgentConfig, create_agent_service
-from foundry_agent_core import create_dependency_container, AgentRequest
+from foundry_strands_agent import (
+    StrandsAgentConfig,
+    create_agent_service,
+    create_default_container,
+)
+from foundry_agent_core import AgentRequest
 
 async def main():
     config = StrandsAgentConfig()  # default: bedrock + claude-sonnet-4
-    container = create_dependency_container()
-    container.register_factory(StrandsAgentConfig, lambda: config)
+    container = create_default_container(config)
 
     service = create_agent_service(container)
     async with service.service_lifecycle():
@@ -60,6 +64,10 @@ config = StrandsAgentConfig(
 ```
 
 ### Streaming
+
+This replaces the `response = await service.process_query(request)` line in
+the Quickstart `main()` above — it is not a standalone script, since it
+reuses the same `service` and `request`:
 
 ```python
 async for event in service.process_query_stream(request):
@@ -104,7 +112,7 @@ extracts text, scores confidence, and normalizes the response.
 
 | Surface | Highlights |
 |---------|------------|
-| Services | `AgentService`, `create_agent_service`, `QueryOrchestrator`, `DefaultResponseProcessor` |
+| Services | `AgentService`, `create_agent_service`, `create_default_container`, `QueryOrchestrator`, `DefaultResponseProcessor` |
 | Config | `StrandsAgentConfig`, `AgentModelConfig`, `ModelGuardrailConfig`, `StrandsSessionManagerType` |
 | Factories | `StrandsAgentFactory`, `AgentToolRegistryManager`, `AgentFactory`, `AgentToolRegistry` |
 | Sessions | `ChatHistorian`, `ChatHistoryManager`, `create_chat_history_manager` |
@@ -113,18 +121,14 @@ extracts text, scores confidence, and normalizes the response.
 
 ## Security
 
-- **Session IDs** validated against `^[A-Za-z0-9_-]{8,128}$` (DISA STIG V-222609)
+- **Session IDs** validated against pattern `^[A-Za-z0-9_-]+$` with 8-128 character length constraints (DISA STIG V-222609)
 - **TLS 1.2+** enforced on all outbound HTTPS (NIMS, MCP, A2A, Bedrock) with `CERT_REQUIRED` (DISA STIG V-222596)
 - **File-backed sessions** encrypted with AES-256-GCM via `SESSION_ENCRYPTION_KEY` (DISA STIG V-222588 / V-222589)
 - **Session destruction** via `ChatHistoryManager.on_logoff(session_id)` (DISA STIG V-222578)
 
-See the
-[STIG checklist](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/security/stig_checklist.json)
-for the full control list.
-
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/README.md) — full field reference, tool loading, sessions, MCP, A2A, extending
+- [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/README.md)
 - [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/CHANGELOG.md)
 - [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-strands-agent)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-strands-agent/LICENSE)
+- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/LICENSE)
