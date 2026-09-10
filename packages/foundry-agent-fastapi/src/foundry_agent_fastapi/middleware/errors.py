@@ -23,6 +23,8 @@ from foundry_agent_fastapi.utils import generate_correlation_id
 
 logger = logging.getLogger(__name__)
 
+_GENERIC_ERROR_MESSAGE = "An internal error occurred. Use the correlation_id to reference this request."
+
 
 class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     """Global error handling middleware using InfrastructureErrorTranslator patterns."""
@@ -69,7 +71,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
             )
             content = {
                 "error": type(domain_error).__name__,
-                "message": str(domain_error),
+                "message": _GENERIC_ERROR_MESSAGE,
                 "correlation_id": correlation_id,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -137,17 +139,12 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
 
 
 def _domain_error_to_api_response(error: DomainError, correlation_id: str | None = None) -> ErrorResponse:
-    """Convert domain error to API error response (inlined from mappers)."""
+    """Convert domain error to API error response."""
     error_type_name = type(error).__name__
-    details: dict[str, Any] = {}
-    if hasattr(error, "context") and error.context:
-        excluded = {"traceback_info", "error_attributes", "timestamp"}
-        details = {k: v for k, v in error.context.items() if k not in excluded}
-    details["error_class"] = error_type_name
     return ErrorResponse(
         error=error_type_name,
-        message=str(error),
-        details=details,
+        message=_GENERIC_ERROR_MESSAGE,
+        details=None,
         correlation_id=correlation_id,
         timestamp=datetime.now(),
     )

@@ -36,13 +36,9 @@ context: |
   - `openspec/changes/` — active proposals (if any) and `archive/` of
     completed ones.
 
-  **Security posture**: each package owns a
-  `packages/<pkg>/security/stig_checklist.json` tracking its findings
-  against the DISA ASD STIG (status, responsibility, evidence). When a
-  proposal touches a STIG-relevant area for a given package — auth,
-  authz, crypto, audit logging, session handling, data handling, or
-  input validation — update that package's checklist in the same
-  change.
+  **Security posture**: when a proposal touches a STIG-relevant area for a
+  given package (auth, authz, crypto, audit logging, session handling, data
+  handling, or input validation), call that out explicitly in the proposal.
 
   **Hard constraints**:
   - Respect package boundaries. `foundry-agent-core` is the lowest

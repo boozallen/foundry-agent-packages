@@ -6,6 +6,7 @@ from foundry_agent_fastapi.mappers import api_request_to_domain, domain_error_to
 from foundry_agent_fastapi.middleware.cors import add_cors_middleware
 from foundry_agent_fastapi.middleware.errors import add_error_handling_middleware
 from foundry_agent_fastapi.middleware.logging import add_request_logging_middleware
+from foundry_agent_fastapi.middleware.tracing import add_tracing_middleware
 from foundry_agent_fastapi.models.requests import QueryAPIRequest
 from foundry_agent_fastapi.models.responses import ErrorResponse, QueryAPIResponse
 from foundry_agent_fastapi.routes.health import router as health_router
@@ -15,6 +16,7 @@ __all__ = [
     "add_cors_middleware",
     "add_error_handling_middleware",
     "add_request_logging_middleware",
+    "add_tracing_middleware",
     "api_request_to_domain",
     "domain_error_to_api_response",
     "domain_response_to_api",

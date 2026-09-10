@@ -11,11 +11,12 @@ against a user-supplied `BaseModel`.
 
 ## Install
 
-```bash
-uv add foundry-agent-config
-# or
-pip install foundry-agent-config
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 ## Quickstart
 
@@ -48,12 +49,11 @@ config = load_config(AppConfig, Path("config.yaml"), env_prefix="MYAPP")
 The loader bounds YAML file size, environment-variable size, and key
 counts to prevent resource-exhaustion attacks (DISA STIG V-222612).
 Command-execution sinks are prohibited and gated by Ruff `S6xx` rules
-plus `bandit` narrow-set in CI (DISA STIG V-222604). See the
-[STIG checklist](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/security/stig_checklist.json).
+plus `bandit` narrow-set (DISA STIG V-222604).
 
 ## Reference
 
 - [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/README.md)
 - [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/CHANGELOG.md)
 - [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-agent-config)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/LICENSE)
+- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/LICENSE)

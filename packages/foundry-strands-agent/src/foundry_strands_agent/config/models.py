@@ -16,7 +16,7 @@ from typing import Annotated, Any, Self
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from foundry_agent_config import load_config
-from foundry_agent_core import InvalidConfigurationError
+from foundry_agent_core import _MAX_QUERY_LEN, InvalidConfigurationError
 
 _MAX_NAME_LEN = 128
 _MAX_DESCRIPTION_LEN = 1024
@@ -39,7 +39,7 @@ _MAX_LOG_LEVEL_LEN = 16
 _MAX_PORT = 65535
 _MAX_CONVERSATION_LENGTH = 1000
 _MAX_CONVERSATION_WINDOW_SIZE = 1000
-_MAX_QUERY_LENGTH = 8192
+_MAX_QUERY_LENGTH = _MAX_QUERY_LEN
 _MAX_RESPONSE_TIME_MS = 86_400_000  # 24h
 _MAX_AGENT_STATE_KEYS = 128
 _MAX_AGENT_STATE_KEY_LEN = 128
@@ -89,8 +89,15 @@ class AgentModelConfig(BaseModel):
         Annotated[str, StringConstraints(min_length=1, max_length=_MAX_API_KEY_LEN, strip_whitespace=True)] | None
     ) = None
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, ge=1, le=32_768)
+    max_tokens: int | None = Field(default=None, ge=1, le=131_072)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Extends (does not replace) the built-in reject set in factory.py's
+    # _BEDROCK_TEMPERATURE_REJECTING_MODEL_SUBSTRINGS - lets an operator add a
+    # newly-discovered temperature-rejecting model_id (or a custom import) without
+    # a package upgrade.
+    bedrock_temperature_rejecting_models: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=_MAX_MODEL_ID_LEN, strip_whitespace=True)]
+    ] = Field(default_factory=list, max_length=_MAX_MODULES)
     streaming: bool = True
     region_name: (
         Annotated[str, StringConstraints(min_length=1, max_length=_MAX_REGION_LEN, strip_whitespace=True)] | None
@@ -129,6 +136,9 @@ class StrandsAgentConfig(BaseModel):
     tools_files: list[
         Annotated[str, StringConstraints(min_length=1, max_length=_MAX_ENTRY_LEN, strip_whitespace=True)]
     ] = Field(default_factory=list, max_length=_MAX_PATHS)
+    tools_dir: (
+        Annotated[str, StringConstraints(min_length=1, max_length=_MAX_ENTRY_LEN, strip_whitespace=True)] | None
+    ) = None
     max_conversation_length: int = Field(default=10, ge=1, le=_MAX_CONVERSATION_LENGTH)
     enable_memory: bool = False
     knowledge_base_id: (
@@ -253,6 +263,9 @@ class StrandsAgentConfig(BaseModel):
             temperature=float(os.getenv("STRANDS_TEMPERATURE", "0.3")),
             max_tokens=int(v) if (v := os.getenv("STRANDS_MAX_TOKENS")) else None,
             top_p=float(v) if (v := os.getenv("STRANDS_TOP_P")) else None,
+            bedrock_temperature_rejecting_models=[
+                m.strip() for m in os.getenv("STRANDS_BEDROCK_TEMPERATURE_REJECTING_MODELS", "").split(",") if m.strip()
+            ],
             streaming=os.getenv("STRANDS_STREAMING", "true").lower() == "true",
             region_name=os.getenv("AWS_DEFAULT_REGION"),
             guardrails=ModelGuardrailConfig(
@@ -303,6 +316,7 @@ class StrandsAgentConfig(BaseModel):
             ),
             tools_modules=[t.strip() for t in tools_modules_env.split(",") if t.strip()],
             tools_files=[t.strip() for t in tools_files_env.split(",") if t.strip()],
+            tools_dir=os.getenv("STRANDS_TOOLS_DIR") or None,
             max_conversation_length=int(os.getenv("STRANDS_MAX_CONVERSATION_LENGTH", "10")),
             enable_memory=os.getenv("STRANDS_ENABLE_MEMORY", "false").lower() == "true",
             knowledge_base_id=os.getenv("STRANDS_KNOWLEDGE_BASE_ID"),

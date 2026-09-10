@@ -13,6 +13,7 @@ from foundry_strands_agent.config.models import (
     StrandsAgentConfig,
     StrandsSessionManagerType,
 )
+from foundry_strands_agent.container import create_default_container
 from foundry_strands_agent.exceptions import (
     AgentServiceError,
     AgentServiceInitializationError,
@@ -60,4 +61,5 @@ __all__ = [
     "SessionMessage",
     "create_agent_service",
     "create_chat_history_manager",
+    "create_default_container",
 ]

@@ -1,7 +1,6 @@
 # foundry-strands-agent
 
-![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 AWS Strands SDK adapter that implements the `foundry-agent-core`
@@ -15,11 +14,12 @@ protocol-based factory.
 
 ## Install
 
-```bash
-uv add foundry-strands-agent
-# or
-pip install foundry-strands-agent
-```
+Install a released wheel from this repo's
+[GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
+See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+for the full flow - pinning a release URL directly for evaluation, or
+hosting the wheel in your own index for production, plus verifying the
+SBOM/scan assets.
 
 Requires AWS credentials (Bedrock), a running Ollama instance, a
 LlamaCpp server, or a NIMS / OpenAI-compatible endpoint.
@@ -28,13 +28,16 @@ LlamaCpp server, or a NIMS / OpenAI-compatible endpoint.
 
 ```python
 import asyncio
-from foundry_strands_agent import StrandsAgentConfig, create_agent_service
-from foundry_agent_core import create_dependency_container, AgentRequest
+from foundry_strands_agent import (
+    StrandsAgentConfig,
+    create_agent_service,
+    create_default_container,
+)
+from foundry_agent_core import AgentRequest
 
 async def main():
     config = StrandsAgentConfig()
-    container = create_dependency_container()
-    container.register_factory(StrandsAgentConfig, lambda: config)
+    container = create_default_container(config)
 
     service = create_agent_service(container)
     async with service.service_lifecycle():
@@ -49,7 +52,7 @@ asyncio.run(main())
 
 | Surface | Highlights |
 |---------|------------|
-| Services | `AgentService`, `create_agent_service`, `QueryOrchestrator`, `DefaultResponseProcessor` |
+| Services | `AgentService`, `create_agent_service`, `create_default_container`, `QueryOrchestrator`, `DefaultResponseProcessor` |
 | Config | `StrandsAgentConfig`, `AgentConfig`, `AgentModelConfig`, `ModelGuardrailConfig`, `StrandsSessionManagerType` |
 | Factories | `StrandsAgentFactory`, `AgentToolRegistryManager`, `AgentFactory`, `AgentToolRegistry` |
 | Sessions | `ChatHistorian`, `ChatHistoryManager`, `create_chat_history_manager` |
@@ -60,10 +63,49 @@ asyncio.run(main())
 
 - **Session IDs** validated against `^[A-Za-z0-9_-]{8,128}$` (DISA STIG V-222609)
 - **TLS 1.2+** enforced on all outbound HTTPS (NIMS, MCP, A2A, Bedrock) with `CERT_REQUIRED` (DISA STIG V-222596)
+- **Outbound mTLS** supported via `FOUNDRY_TLS_CLIENT_CERTFILE` and `FOUNDRY_TLS_CLIENT_KEYFILE` env vars for agent-to-agent calls requiring mutual TLS (DISA STIG V-222532/V-222534)
 - **File-backed sessions** encrypted with AES-256-GCM via `SESSION_ENCRYPTION_KEY` (DISA STIG V-222588/V-222589)
 - **Session destruction** via `ChatHistoryManager.on_logoff(session_id)` (DISA STIG V-222578)
 
-See [`security/stig_checklist.json`](security/stig_checklist.json) for the full control list.
+## Security policy: transport encryption
+
+All outbound HTTPS connections use `ssl.SSLContext` configured with a TLS 1.2
+minimum version and certificate verification required. The context comes from
+`create_tls_context()` in `tls.py`.
+
+**Covered providers:**
+
+| Provider | TLS enforcement |
+|----------|------------------|
+| NIMS / OpenAI-compatible | `create_tls_context()` on the model's `httpx.Client` |
+| MCP servers | `create_mcp_http_client()` calls `create_tls_context()` |
+| A2A agents | `create_tls_context()` passed as `httpx_client_args["verify"]` |
+| Bedrock | Delegates to the AWS SDK. No custom `SSLContext` is injected. |
+| Ollama / LlamaCpp | Localhost development endpoints. TLS is not enforced. |
+
+**Development escape hatch:**
+
+Set `FOUNDRY_TLS_VERIFY=false` to disable certificate verification against a
+self-signed certificate in local development. The TLS 1.2 floor still applies
+even with verification disabled.
+
+```bash
+export FOUNDRY_TLS_VERIFY=false
+```
+
+**Outbound mutual TLS (mTLS):**
+
+Set both `FOUNDRY_TLS_CLIENT_CERTFILE` and `FOUNDRY_TLS_CLIENT_KEYFILE` to
+present a client certificate on outbound connections.
+
+```bash
+export FOUNDRY_TLS_CLIENT_CERTFILE=/path/to/client.crt
+export FOUNDRY_TLS_CLIENT_KEYFILE=/path/to/client.key
+```
+
+Setting only one of the two logs a warning and skips client certificate
+loading; it does not raise an error. A path that does not exist at either
+variable raises `FileNotFoundError` naming the missing file.
 
 ## Documentation
 

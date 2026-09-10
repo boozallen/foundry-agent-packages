@@ -14,6 +14,7 @@ registered via :meth:`StrandsAgentFactory.load_configured_tools` during
 import asyncio
 import logging
 import os
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -29,9 +30,9 @@ from strands.tools.mcp import MCPClient
 from strands_tools.a2a_client import A2AClientToolProvider
 
 from foundry_agent_core import AgentCreationError, DependencyContainer, ExternalServiceError, mask_session_id
+from foundry_agent_core.encryption import load_encryption_key
 from foundry_strands_agent.config.models import AgentConfig, StrandsSessionManagerType
 from foundry_strands_agent.encrypted_session import EncryptedFileSessionManager
-from foundry_strands_agent.encryption import load_encryption_key
 from foundry_strands_agent.protocols import (
     AgentFactory,
     AgentToolRegistry,
@@ -86,22 +87,73 @@ def _default_s3_session_manager(
     return session_manager
 
 
+# Model-ID substrings for model families that reject any non-default temperature/top_p/top_k on
+# every request. Claude entries confirmed via Anthropic's docs, platform.claude.com/docs/en/
+# build-with-claude/thinking. GPT-5.6 confirmed live against real Bedrock (all three variants):
+# ValidationException "This model doesn't support the temperature field. Remove temperature and
+# try again." Deliberately scoped to what's confirmed, not speculative about untested models.
+# A more general per-model-family constraint registry is tracked separately.
+_BEDROCK_TEMPERATURE_REJECTING_MODEL_SUBSTRINGS = (
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "gpt-5.6",
+)
+
+
+# Digit-boundary check after each substring, so "claude-opus-5" doesn't also match a
+# hypothetical distinct future model like "claude-opus-50" - substrings in the reject set are
+# always followed by "-"/end-of-string in real Bedrock model IDs, never directly by another digit.
+def _compile_temperature_reject_pattern(substrings: Sequence[str]) -> re.Pattern[str]:
+    return re.compile("|".join(re.escape(s.lower()) + r"(?!\d)" for s in substrings))
+
+
+_BEDROCK_TEMPERATURE_REJECTING_PATTERN = _compile_temperature_reject_pattern(
+    _BEDROCK_TEMPERATURE_REJECTING_MODEL_SUBSTRINGS
+)
+
+
+# Checks model_id against the built-in reject set, plus any operator-configured additions
+# (StrandsAgentConfig.model.bedrock_temperature_rejecting_models / STRANDS_BEDROCK_TEMPERATURE_
+# REJECTING_MODELS), which extend rather than replace the built-in set.
+def _bedrock_model_rejects_temperature(model_id: str, extra_reject_models: Sequence[str] = ()) -> bool:
+    lowered = model_id.lower()
+    if _BEDROCK_TEMPERATURE_REJECTING_PATTERN.search(lowered):
+        return True
+    if not extra_reject_models:
+        return False
+    return bool(_compile_temperature_reject_pattern(extra_reject_models).search(lowered))
+
+
 def _default_bedrock_model(config: dict[str, Any]) -> Model:
     read_timeout = int(os.getenv("AWS_READ_TIMEOUT", 900))
     connect_timeout = int(os.getenv("AWS_CONNECT_TIMEOUT", 60))
+    model_id = config["model"]["model_id"]
     max_tokens = config["model"].get("max_tokens")
+    extra_reject_models = config["model"].get("bedrock_temperature_rejecting_models") or []
+    temperature = (
+        None
+        if _bedrock_model_rejects_temperature(model_id, extra_reject_models)
+        else config["model"].get("temperature")
+    )
     if config.get("guardrail_config") is not None:
         return BedrockModel(
-            model_id=config["model"]["model_id"],
+            model_id=model_id,
             max_tokens=max_tokens,
+            temperature=temperature,
             guardrail_id=config["guardrail_config"]["guardrail_id"],
             guardrail_version=config["guardrail_config"]["guardrail_version"],
             guardrail_trace=config["guardrail_config"]["guardrail_trace"],
             boto_client_config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
         )
     return BedrockModel(
-        model_id=config["model"]["model_id"],
+        model_id=model_id,
         max_tokens=max_tokens,
+        temperature=temperature,
         boto_client_config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
     )
 
@@ -264,10 +316,11 @@ class StrandsAgentFactory(AgentFactory):
             tools = list[Any](tools or [])  # create a new list to not mutate `tools` argument
 
             # Load tools from modules and files
+            tools_dir = base_config.tools_dir
             if base_config.tools_modules:
-                tools.extend(await self._load_tools_from_modules(base_config.tools_modules))
+                tools.extend(await self._load_tools_from_modules(base_config.tools_modules, tools_dir))
             if base_config.tools_files:
-                tools.extend(await self._load_tools_from_files(base_config.tools_files))
+                tools.extend(await self._load_tools_from_files(base_config.tools_files, tools_dir))
 
             # Add MCP tools if MCP servers are configured
             if base_config.mcp_servers:
@@ -382,14 +435,15 @@ class StrandsAgentFactory(AgentFactory):
                 state=AgentState(base_config.agent_state_initial_values),
             )
 
+            # Log from typed config (not config_dict) to avoid CodeQL taint.
+            # Safe because config_overrides only sets session_id today — never model fields.
             logger.info(
                 "Created Strands Agent instance",
                 extra={
-                    "provider": config_dict["model"]["provider"],
-                    "model_id": config_dict["model"]["model_id"],
+                    "provider": base_config.model.provider,
+                    "model_id": base_config.model.model_id,
                     "tools_count": len(tools),
                     "agent_type": type(agent).__name__,
-                    "agent_methods": [method for method in dir(agent) if not method.startswith("_")],
                 },
             )
 
@@ -624,11 +678,13 @@ class StrandsAgentFactory(AgentFactory):
                 state=AgentState(base_config.agent_state_initial_values),
             )
 
+            # Log from typed config (not config_dict) to avoid CodeQL taint.
+            # Safe because config_overrides only sets session_id today — never model fields.
             logger.info(
                 "Created Strands Agent with MCP tools and A2A tools",
                 extra={
-                    "provider": config_dict["model"]["provider"],
-                    "model_id": config_dict["model"]["model_id"],
+                    "provider": base_config.model.provider,
+                    "model_id": base_config.model.model_id,
                     "mcp_servers_count": len(mcp_servers),
                     "a2a_servers_count": len(base_config.a2a_servers) if base_config.a2a_servers else 0,
                     "total_tools": len(tools),
@@ -840,6 +896,7 @@ class StrandsAgentFactory(AgentFactory):
                 "temperature": config.model.temperature,
                 "max_tokens": config.model.max_tokens,
                 "top_p": config.model.top_p,
+                "bedrock_temperature_rejecting_models": config.model.bedrock_temperature_rejecting_models,
                 "streaming": config.model.streaming,
                 "region_name": config.model.region_name,
             },
@@ -1086,6 +1143,7 @@ class StrandsAgentFactory(AgentFactory):
         try:
             tools_modules = config.tools_modules
             tools_files = config.tools_files
+            tools_dir = config.tools_dir
 
             if not tools_modules and not tools_files:
                 logger.info("No tools specified in STRANDS_TOOLS_MODULES or STRANDS_TOOLS_FILES, skipping tool loading")
@@ -1096,7 +1154,7 @@ class StrandsAgentFactory(AgentFactory):
 
             for module_path in tools_modules:
                 try:
-                    tool = await load_tool_from_module(module_path)
+                    tool = await load_tool_from_module(module_path, tools_dir=tools_dir)
                     loaded_tools.append((module_path, tool))
 
                     tool_name, tool_format = self._get_tool_name(tool)
@@ -1122,7 +1180,7 @@ class StrandsAgentFactory(AgentFactory):
 
             for file_path in tools_files:
                 try:
-                    tool = await load_tool_from_file(file_path)
+                    tool = await load_tool_from_file(file_path, tools_dir=tools_dir)
 
                     if isinstance(tool, list):
                         for t in tool:
@@ -1230,12 +1288,16 @@ class StrandsAgentFactory(AgentFactory):
                     extra={"tool_spec": tool_spec, "error": str(e)},
                 )
 
-    async def _load_tools_from_modules(self, tools_modules: list[str]) -> list[ToolFunction]:
-        """Load tools from modules."""
+    async def _load_tools_from_modules(
+        self,
+        tools_modules: list[str],
+        tools_dir: str | None = None,
+    ) -> list[ToolFunction]:
+        """Load tools from modules, confined to ``tools_dir`` when configured."""
         tools = []
         for tool_module in tools_modules:
             try:
-                loaded = await load_tool_from_module(tool_module)
+                loaded = await load_tool_from_module(tool_module, tools_dir=tools_dir)
                 if hasattr(loaded, "TOOL_SPEC"):
                     tools.extend(getattr(loaded, "TOOL_SPEC", {}).get("tools", []))
                 else:
@@ -1251,12 +1313,16 @@ class StrandsAgentFactory(AgentFactory):
                 )
         return tools
 
-    async def _load_tools_from_files(self, tools_files: list[str]) -> list[ToolFunction]:
-        """Load tools from files."""
+    async def _load_tools_from_files(
+        self,
+        tools_files: list[str],
+        tools_dir: str | None = None,
+    ) -> list[ToolFunction]:
+        """Load tools from files, confined to ``tools_dir`` when configured."""
         tools = []
         for tool_path in tools_files:
             try:
-                tool = await load_tool_from_file(tool_path)
+                tool = await load_tool_from_file(tool_path, tools_dir=tools_dir)
                 tools.append(tool)
             except Exception as e:
                 logger.error(

@@ -7,7 +7,7 @@ from typing import Any
 
 from strands.session import FileSessionManager
 
-from foundry_strands_agent.encryption import decrypt, encrypt, is_encrypted
+from foundry_agent_core.encryption import decrypt, encrypt, is_encrypted
 
 logger = logging.getLogger(__name__)
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-08
+
+### Changed
+
+- Increased the maximum allowed sizes for request queries, context, and response content.
+
 ## [1.0.0] - 2026-06-29
 
 Initial public release.

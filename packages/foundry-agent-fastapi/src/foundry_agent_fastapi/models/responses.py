@@ -11,7 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-_MAX_CONTENT_LEN = 131072
+from foundry_agent_core import _MAX_CONTENT_LEN
+
 _MAX_SESSION_ID_LEN = 128
 _MAX_PROCESSING_TIME_MS = 86_400_000  # 24h
 _MAX_ERROR_CODE_LEN = 64

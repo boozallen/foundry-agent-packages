@@ -12,25 +12,32 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, StringConstraints, field_serializer, field_validator
 
-from foundry_agent_core import mask_session_id
+from foundry_agent_core import (
+    _MAX_CONTENT_LEN,
+    _MAX_DICT_BYTES,
+    _MAX_DICT_KEY_LEN,
+    _MAX_DICT_KEYS,
+    _MAX_QUERY_LEN,
+    _MAX_RESULTS,
+    mask_session_id,
+)
 
-_MAX_QUERY_LEN = 8192
 _MAX_SESSION_ID_LEN = 128
-_MAX_RESULTS = 100
 _MAX_DOC_ID_LEN = 256
 _MAX_CHUNK_ID_LEN = 128
 _MAX_CONTENT_PREVIEW_LEN = 4096
 _MAX_CHUNK_CONTENT_LEN = 131072
-_MAX_RESPONSE_TEXT_LEN = 131072
+_MAX_RESPONSE_TEXT_LEN = _MAX_CONTENT_LEN
 _MAX_SOURCES = 100
 _MAX_CHUNKS_USED = 100
 _MAX_PROCESSING_TIME_MS = 86_400_000  # 24h
-_MAX_CONTEXT_KEYS = 32
-_MAX_CONTEXT_KEY_LEN = 128
-_MAX_CONTEXT_BYTES = 16384
+_MAX_CONTEXT_KEYS = _MAX_DICT_KEYS
+_MAX_CONTEXT_KEY_LEN = _MAX_DICT_KEY_LEN
+_MAX_CONTEXT_BYTES = _MAX_DICT_BYTES
 _MAX_METADATA_KEYS = 64
 _MAX_METADATA_KEY_LEN = 128
 _MAX_METADATA_BYTES = 32768
+_MAX_DOCUMENT_SIZE = 100_000_000  # 100 MB — max source document size for character offsets
 
 
 _BoundedQuery = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_QUERY_LEN)]
@@ -147,8 +154,8 @@ class DocumentChunk(BaseModel):
     metadata: dict[str, Any]
     source_document_id: _BoundedDocumentId
     chunk_index: int = Field(ge=0, le=10_000_000)
-    character_start: int = Field(ge=0, le=10_000_000)
-    character_end: int = Field(ge=0, le=10_000_000)
+    character_start: int = Field(ge=0, le=_MAX_DOCUMENT_SIZE)
+    character_end: int = Field(ge=0, le=_MAX_DOCUMENT_SIZE)
 
     @field_validator("chunk_id")
     @classmethod

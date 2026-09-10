@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foundry-agent-fastapi"
-version = "1.0.0"
+version = "1.2.0"
 license = "Apache-2.0"
 license-files = ["LICENSE*", "NOTICE*"]
 description = "Foundry Agent FastAPI — CORS/error/logging middleware, health check, API model helpers"
@@ -16,10 +16,29 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["fastapi>=0.100", "foundry-agent-core>=1.0.0"]
+dependencies = [
+    "fastapi>=0.100",
+    "foundry-agent-core>=1.0.0",
+    "opentelemetry-api>=1.41.1",
+]
 
 [project.optional-dependencies]
 test = ["httpx>=0.28.1"]
+
+# Package-local dev tooling so this package's own justfile recipes
+# (`uv run pytest` / `ruff` / `basedpyright` from THIS directory) resolve on a
+# cold clone without pointing uv at the workspace root. Versions mirror the
+# workspace root's `[dependency-groups] dev` so a single resolution satisfies
+# both. See openspec/changes/foundry-850-standardize-testing/design.md.
+[dependency-groups]
+dev = [
+    "basedpyright==1.33.0",
+    "httpx>=0.28.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "ruff==0.14.5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/foundry_agent_fastapi"]
@@ -30,16 +49,32 @@ packages = ["src/foundry_agent_fastapi"]
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]
-# STIG V-222604 (CCI-001310) — prohibit command-injection sinks. Enforced in CI.
+# STIG V-222604 (CCI-001310) prohibits command-injection sinks.
 # See README.md § "Security policy: command injection".
 extend-select = ["S102", "S307", "S602", "S603", "S604", "S605", "S606", "S607"]
 
 # Pytest + coverage config is package-local so each package owns its own
 # coverage source path and threshold. See docs/foundry/internal/coverage.md.
+# --cov-fail-under enforces the 70% threshold on the pytest invocation itself
+# (the coverage.report fail_under below only gates `coverage report`/`html`).
+# The unit/integration split is by DIRECTORY (`tests/unit/`,
+# `tests/integration/`), not by marker, so addopts carries no marker expression.
+# The `integration` marker below stays declared as a trait tag; nothing selects
+# on it. HTML coverage is always on and is keyed by module name so root-invoked
+# per-package runs write to distinct directories.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short --import-mode=importlib --cov=src/foundry_agent_fastapi --cov-report=term-missing"
+addopts = "-v --tb=short --strict-markers --strict-config --import-mode=importlib --cov=src/foundry_agent_fastapi --cov-report=term-missing --cov-report=html:htmlcov/foundry_agent_fastapi --cov-fail-under=70"
 asyncio_mode = "auto"
+markers = [
+    "integration: test requires an external service, network access, or real credentials (trait tag only; the tier is set by tests/integration/)",
+]
+# Third-party deprecation noise that this repo cannot act on; keep the list
+# narrow so warnings from our own code stay visible.
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.coverage.run]
 source = ["src/foundry_agent_fastapi"]
@@ -49,3 +84,12 @@ omit = ["tests/*"]
 [tool.coverage.report]
 fail_under = 70
 show_missing = true
+
+# Mirrors the workspace root's [tool.basedpyright] so `just type-check` run
+# from THIS directory resolves the same settings the root run uses (basedpyright
+# does not walk up to a parent pyproject.toml the way ruff `extend` does).
+[tool.basedpyright]
+pythonVersion = "3.13"
+include = ["src"]
+exclude = ["**/build", "**/dist", "**/.venv", "**/__pycache__"]
+typeCheckingMode = "basic"

@@ -7,7 +7,6 @@ enabling tools to be configured with injected dependencies while maintaining
 compatibility with Strands Agent framework conventions.
 """
 
-import importlib
 import inspect
 import logging
 import types
@@ -21,6 +20,7 @@ from foundry_strands_agent.protocols import (
     ToolFunction,
     ToolMetadata,
 )
+from foundry_strands_agent.tool_loader import _resolve_tools_dir, load_tool_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 class DependencyInjectedToolRegistry:
     """Implementation of AgentToolRegistry with dependency injection support."""
 
-    def __init__(self, container: DependencyContainer) -> None:
+    def __init__(self, container: DependencyContainer, tools_dir: str | None = None) -> None:
         self._container = container
+        self._tools_root = _resolve_tools_dir(tools_dir)
         self._tools: dict[str, ToolFunction] = {}
         self._metadata: dict[str, ToolMetadata] = {}
         self._tool_dependencies: dict[str, list[type[Any]]] = {}
@@ -139,9 +140,18 @@ class DependencyInjectedToolRegistry:
     def get_available_tools(self) -> list[ToolFunction]:
         return list(self._tools.values())
 
-    def load_tools_from_directory(self, directory_path: str) -> None:
+    async def load_tools_from_directory(self, directory_path: str) -> None:
         try:
-            directory = Path(directory_path)
+            directory = Path(directory_path).resolve()
+
+            # Containment first: reject a directory outside the configured tools
+            # root before any file in it is globbed, read, or executed.
+            if directory != self._tools_root and self._tools_root not in directory.parents:
+                raise ToolLoadingError(
+                    f"Tool directory outside allowed tools directory: {directory_path}",
+                    context={"directory": str(directory), "tools_dir": str(self._tools_root)},
+                )
+
             if not directory.exists():
                 raise ToolLoadingError(
                     f"Tool directory does not exist: {directory_path}",
@@ -156,16 +166,37 @@ class DependencyInjectedToolRegistry:
 
             python_files = list(directory.glob("**/*.py"))
             loaded_count = 0
+            rejected: dict[str, str] = {}
 
             for py_file in python_files:
                 if py_file.name.startswith("_"):
                     continue
 
                 try:
-                    self._load_tools_from_file(py_file)
+                    await self._load_tools_from_file(py_file)
                     loaded_count += 1
                 except Exception as e:
-                    logger.warning("Warning: Failed to load tools from %s: %s", py_file, e)
+                    # The audited loader refused this file, or it is not a tool
+                    # module. Record and report it rather than swallowing it, and
+                    # keep going so the remaining valid tools still load. Nothing
+                    # from a rejected file is registered.
+                    rejected[str(py_file)] = str(e)
+                    logger.error(
+                        "Rejected tool file during directory load: %s: %s",
+                        py_file,
+                        e,
+                        extra={"file": str(py_file), "reason": str(e), "directory": str(directory)},
+                    )
+
+            if rejected:
+                logger.warning(
+                    "Loaded %d tool file(s) from %s with %d rejected: %s",
+                    loaded_count,
+                    directory,
+                    len(rejected),
+                    "; ".join(f"{path}: {reason}" for path, reason in rejected.items()),
+                    extra={"directory": str(directory), "rejected": rejected, "loaded_files": loaded_count},
+                )
 
             if loaded_count == 0:
                 raise ToolLoadingError(
@@ -173,6 +204,7 @@ class DependencyInjectedToolRegistry:
                     context={
                         "directory": directory_path,
                         "files_found": len(python_files),
+                        "rejected": rejected,
                     },
                 )
 
@@ -294,30 +326,22 @@ class DependencyInjectedToolRegistry:
         except (ValueError, TypeError):
             pass
 
-    def _load_tools_from_file(self, file_path: Path) -> None:
-        try:
-            module_name = self._file_path_to_module_name(file_path)
-            module = importlib.import_module(module_name)
+    async def _load_tools_from_file(self, file_path: Path) -> None:
+        """Load one tool file through the audited loader and register its tools.
 
-            for name in dir(module):
-                obj = getattr(module, name)
+        The loader applies the containment check and the full AST security
+        analysis, then returns a TOOL_SPEC module, a single decorated function,
+        or a list of decorated functions.
 
-                if callable(obj) and self._is_tool_function(obj):
-                    try:
-                        metadata = self._extract_tool_metadata(obj)
-                        self.register_tool(obj, metadata)
-                    except ToolRegistrationError:
-                        pass
+        Raises:
+            ToolLoadingError: If the file fails containment or security analysis
+        """
+        loaded = await load_tool_from_file(file_path, tools_dir=self._tools_root)
 
-        except ImportError as e:
-            raise ToolLoadingError(
-                f"Failed to import module from {file_path}: {e}",
-                context={"file": str(file_path), "error": str(e)},
-            ) from e
-
-    def _file_path_to_module_name(self, file_path: Path) -> str:
-        parts = file_path.with_suffix("").parts
-        return ".".join(parts)
+        metadata: ToolMetadata = {"source": str(file_path), "source_type": "file"}
+        tools = loaded if isinstance(loaded, list) else [loaded]
+        for tool in tools:
+            self.register_tool(tool, metadata)
 
     def _is_tool_function(self, obj: Any) -> bool:
         return callable(obj) and (
@@ -341,9 +365,15 @@ class DependencyInjectedToolRegistry:
         return metadata
 
 
-def create_tool_registry(container: DependencyContainer) -> AgentToolRegistry:
-    """Factory function to create a new tool registry with dependency injection."""
-    return cast(AgentToolRegistry, DependencyInjectedToolRegistry(container))
+def create_tool_registry(container: DependencyContainer, tools_dir: str | None = None) -> AgentToolRegistry:
+    """Factory function to create a new tool registry with dependency injection.
+
+    Args:
+        container: Dependency injection container
+        tools_dir: Tools root that directory loading is confined to. Defaults to
+            the loader's default root when not supplied.
+    """
+    return cast(AgentToolRegistry, DependencyInjectedToolRegistry(container, tools_dir))
 
 
 def create_tool_factory(

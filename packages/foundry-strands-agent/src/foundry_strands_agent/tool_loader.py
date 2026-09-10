@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import importlib
 import importlib.util
 import sys
@@ -70,7 +71,7 @@ SAFE_MODULES_WHITELIST = {
 }
 
 
-def _assert_module_in_tools_dir(module_path: str) -> None:
+def _assert_module_in_tools_dir(module_path: str, tools_dir: Path) -> None:
     spec = importlib.util.find_spec(module_path)
     if spec is None:
         raise ToolLoadingError("Tool module not found", context={"module": module_path})
@@ -78,20 +79,20 @@ def _assert_module_in_tools_dir(module_path: str) -> None:
     # Regular module: spec.origin points to a .py/.pyc file
     if spec.origin and spec.origin not in ("built-in", "frozen"):
         origin = Path(spec.origin).resolve()
-        if TOOLS_DIR not in origin.parents:
+        if tools_dir not in origin.parents:
             raise ToolLoadingError(
                 "Tool module outside allowed tools directory",
-                context={"module": module_path, "origin": str(origin), "tools_dir": str(TOOLS_DIR)},
+                context={"module": module_path, "origin": str(origin), "tools_dir": str(tools_dir)},
             )
         return
 
     # Package: spec.submodule_search_locations points to package dirs
     if spec.submodule_search_locations:
         dirs = [Path(p).resolve() for p in spec.submodule_search_locations]
-        if not any(TOOLS_DIR in d.parents or d == TOOLS_DIR for d in dirs):
+        if not any(tools_dir in d.parents or d == tools_dir for d in dirs):
             raise ToolLoadingError(
                 "Tool package outside allowed tools directory",
-                context={"module": module_path, "package_dirs": [str(d) for d in dirs], "tools_dir": str(TOOLS_DIR)},
+                context={"module": module_path, "package_dirs": [str(d) for d in dirs], "tools_dir": str(tools_dir)},
             )
         return
 
@@ -155,6 +156,27 @@ def analyze_dangerous_calls(source_code: str):
 
     DANGEROUS_ATTRIBUTES = {"system", "popen", "spawn", "call", "run", "Popen", "check_output", "getstatusoutput"}
 
+    # Introspection dunders that let a whitelisted module reach builtins/exec.
+    DANGEROUS_DUNDERS = {
+        "__builtins__",
+        "__globals__",
+        "__getattribute__",
+        "__getattr__",
+        "__class__",
+        "__bases__",
+        "__base__",
+        "__subclasses__",
+        "__mro__",
+        "__dict__",
+        "__import__",
+        "__loader__",
+        "__spec__",
+        "__code__",
+        "__closure__",
+        "__reduce__",
+        "__reduce_ex__",
+    }
+
     for node in ast.walk(tree):
         # Check function calls
         if isinstance(node, ast.Call):
@@ -165,6 +187,41 @@ def analyze_dangerous_calls(source_code: str):
             elif isinstance(node.func, ast.Attribute):
                 if node.func.attr in DANGEROUS_ATTRIBUTES:
                     raise ToolLoadingError(f"Dangerous method call: {node.func.attr}")
+
+            else:
+                # Default-deny any callee that is not a plain Name or Attribute
+                # (Subscript, Lambda, Call, BinOp, IfExp, ...). These hide the
+                # call target from this static check and enable sandbox bypass
+                # via e.g. json.__builtins__['ex'+'ec'](...).
+                raise ToolLoadingError(f"Indirect call via {type(node.func).__name__} expression is not allowed")
+
+        # Block introspection dunders anywhere in the tree, not just as a
+        # Call.func, so that aliasing (b = json.__builtins__; b.get(...)) and
+        # decorator application cannot reach exec via a whitelisted module.
+        elif isinstance(node, ast.Attribute):
+            if node.attr in DANGEROUS_DUNDERS:
+                raise ToolLoadingError(f"Dangerous attribute access: {node.attr}")
+
+        elif isinstance(node, ast.Name):
+            if node.id in DANGEROUS_DUNDERS:
+                raise ToolLoadingError(f"Dangerous name reference: {node.id}")
+
+
+def _is_valid_base64_candidate(candidate: str) -> bool:
+    """Check whether a regex-matched string is actually decodable base64.
+
+    Ordinary identifiers, parameter names, and JSON-style dict keys can match a
+    character-class regex for base64 by coincidence, but essentially never satisfy
+    both length-mod-4 and valid-padding/alphabet constraints — real base64-encoded
+    payloads do, by construction.
+    """
+    if len(candidate) % 4 != 0:
+        return False
+    try:
+        base64.b64decode(candidate, validate=True)
+    except Exception:
+        return False
+    return True
 
 
 class ModuleSecurityAnalyzer:
@@ -209,17 +266,23 @@ class ModuleSecurityAnalyzer:
         return True
 
     def detect_obfuscation(self, source_code: str) -> bool:
-        """Detect code obfuscation attempts"""
-        # Check for excessive use of exec/eval strings
-        exec_count = source_code.count("exec(") + source_code.count("eval(")
-        if exec_count > 0:
-            return True
+        """Detect code obfuscation attempts.
 
-        # Check for base64 encoded strings (potential payload)
+        Genuine exec/eval calls are caught upstream by analyze_dangerous_calls
+        (AST-based, runs unconditionally before this method in
+        analyze_module_file). This method does not re-check for them via raw
+        substring matching, which false-positived on any identifier ending in
+        "exec("/"eval(" (e.g. Retrieval(config)).
+        """
+        # Check for base64 encoded strings (potential payload). The character-class
+        # regex alone matches ordinary long identifiers/parameter names/dict keys just
+        # as readily as real base64 — only count candidates that actually decode as
+        # valid base64.
         import re
 
         b64_pattern = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
-        if len(b64_pattern.findall(source_code)) > 3:
+        valid_b64_matches = [c for c in b64_pattern.findall(source_code) if _is_valid_base64_candidate(c)]
+        if len(valid_b64_matches) > 3:
             return True
 
         # Check for hex encoded strings
@@ -230,12 +293,29 @@ class ModuleSecurityAnalyzer:
         return False
 
 
-# Tools directory for loading tools from the file system within the docker container
+# Default tools directory for loading tools from the file system within the docker
+# container. Callers may override it per call via the ``tools_dir`` argument (see
+# ``StrandsAgentConfig.tools_dir`` / ``STRANDS_TOOLS_DIR``); when they do not, this
+# is the root every containment check is evaluated against.
 TOOLS_DIR = Path("/app/strands_base_agent/tools").resolve()
 SECURITY_ANALYZER = ModuleSecurityAnalyzer()
 
 
-async def load_tool_from_module(module_path: str) -> Any:
+def _resolve_tools_dir(tools_dir: str | Path | None) -> Path:
+    """Resolve the tools root a containment check must be evaluated against.
+
+    Args:
+        tools_dir: Configured tools root, or ``None`` to use the default.
+
+    Returns:
+        The absolute, symlink-resolved tools root.
+    """
+    if not tools_dir:
+        return TOOLS_DIR
+    return Path(tools_dir).resolve()
+
+
+async def load_tool_from_module(module_path: str, tools_dir: str | Path | None = None) -> Any:
     """Import a tool by its Python import path.
 
     Uses Python's importlib to import a module by its dotted path.
@@ -248,6 +328,8 @@ async def load_tool_from_module(module_path: str) -> Any:
 
     Args:
         module_path: Python import path (e.g., 'tools.strands_tools.calculator')
+        tools_dir: Tools root the module must be contained in. Defaults to
+            ``TOOLS_DIR`` when not supplied.
 
     Returns:
         The imported tool (module or function)
@@ -261,7 +343,7 @@ async def load_tool_from_module(module_path: str) -> Any:
     """
     try:
         module_path = module_path.strip()
-        _assert_module_in_tools_dir(module_path)
+        _assert_module_in_tools_dir(module_path, _resolve_tools_dir(tools_dir))
 
         spec = importlib.util.find_spec(module_path)
         if spec is None or not spec.origin:
@@ -290,7 +372,7 @@ async def load_tool_from_module(module_path: str) -> Any:
         ) from e
 
 
-async def load_tool_from_file(file_path: str) -> Any:
+async def load_tool_from_file(file_path: str | Path, tools_dir: str | Path | None = None) -> Any:
     """Load a tool from a file path.
 
     Loads a Python module from a file system path and validates it matches
@@ -303,6 +385,8 @@ async def load_tool_from_file(file_path: str) -> Any:
 
     Args:
         file_path: Path to Python file containing tool (relative or absolute)
+        tools_dir: Tools root the file must be contained in. Defaults to
+            ``TOOLS_DIR`` when not supplied.
 
     Returns:
         The loaded tool (module or function)
@@ -315,9 +399,13 @@ async def load_tool_from_file(file_path: str) -> Any:
         >>> tool = await load_tool_from_file("/absolute/path/to/custom.py")
     """
     path = Path(file_path).resolve()
+    root = _resolve_tools_dir(tools_dir)
 
-    if TOOLS_DIR not in path.parents:
-        raise ToolLoadingError("Tool file outside allowed tools directory", context={"path": str(path)})
+    if root not in path.parents:
+        raise ToolLoadingError(
+            "Tool file outside allowed tools directory",
+            context={"path": str(path), "tools_dir": str(root)},
+        )
 
     if not path.exists():
         raise ToolLoadingError(f"Tool file not found: {file_path}", context={"path": str(path)})

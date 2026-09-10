@@ -77,9 +77,12 @@ def domain_error_to_api_response(
         excluded = {"traceback_info", "error_attributes", "original_error_message", "timestamp"}
         details = {k: v for k, v in error.context.items() if k not in excluded}
     details["error_class"] = error_type_name
+    # str(error) packs the full context (the very keys excluded from details
+    # above) into the text, bypassing that redaction; the clean human message
+    # is the .message attribute every DomainError carries.
     return ErrorResponse(
         error=error_type_name,
-        message=str(error),
+        message=error.message,
         details=details,
         correlation_id=correlation_id,
         timestamp=datetime.now(),

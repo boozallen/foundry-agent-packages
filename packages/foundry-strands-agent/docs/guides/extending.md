@@ -46,22 +46,32 @@ Pass the name as `session_type` in your config (as a raw string).
 
 ## Replacing the Query Processor
 
-Implement the `QueryProcessor` protocol from `foundry-agent-core` and register
-it in the container before calling `create_agent_service`:
+Implement the `QueryProcessor` protocol from `foundry-agent-core` and pass your
+instance to `create_default_container` as the `query_processor` keyword
+argument, which suppresses the default `QueryOrchestrator` registration:
 
 ```python
-from foundry_agent_core import QueryProcessor, AgentRequest, AgentResponse
+from foundry_agent_core import AgentRequest, AgentResponse
+from foundry_strands_agent import (
+    StrandsAgentConfig,
+    create_agent_service,
+    create_default_container,
+)
 
 class MyQueryProcessor:
     async def process_query(self, request: AgentRequest) -> AgentResponse:
         ...
 
-container.register(QueryProcessor, MyQueryProcessor)
+config = StrandsAgentConfig()
+container = create_default_container(config, query_processor=MyQueryProcessor())
 service = create_agent_service(container)
 ```
 
-The same pattern applies to `AgentFactory`, `AgentToolRegistry`,
-`ChatHistoryManager`, and `ResponseProcessor`.
+The same pattern applies to `agent_factory`, `tool_registry`,
+`chat_history_manager`, and `response_processor`.  Note that the container's
+`register_factory` raises `ConfigurationError` on a duplicate interface, so an
+override has to be supplied at container-construction time — you cannot
+re-register a protocol on a container that already has it.
 
 ## Replacing the Response Processor
 
@@ -78,17 +88,25 @@ class MyResponseProcessor(DefaultResponseProcessor):
         base.response_text = my_cleanup(base.response_text)
         return base
 
-container.register(ResponseProcessor, MyResponseProcessor)
+container = create_default_container(config, response_processor=MyResponseProcessor())
 ```
 
 ## Manual Wiring (without create_agent_service)
 
-`create_agent_service` is a convenience factory.  For fine-grained control,
-wire components manually:
+Most adopters do not need this section.  `create_default_container(config)`
+already registers this package's default for all five protocols and accepts a
+keyword-argument override per protocol, and `create_agent_service(container)`
+turns that container into an `AgentService` — that covers both the quickstart
+and the swap-one-component case above.  Reach for manual wiring only when you
+need to construct the components yourself, for example to share one instance
+across several services or to build a component whose constructor arguments
+the factory does not expose.
 
 ```python
+from foundry_agent_core import create_dependency_container
 from foundry_strands_agent import (
     AgentService,
+    StrandsAgentConfig,
     StrandsAgentFactory,
     AgentToolRegistryManager,
     QueryOrchestrator,
@@ -96,9 +114,13 @@ from foundry_strands_agent import (
     ChatHistorian,
 )
 
+config    = StrandsAgentConfig()
+container = create_dependency_container()
+container.register_factory(StrandsAgentConfig, lambda: config)
+
 factory   = StrandsAgentFactory(container)
 registry  = AgentToolRegistryManager(container)
-historian = ChatHistorian(container)
+historian = ChatHistorian(factory, config)
 processor = DefaultResponseProcessor()
 orchestrator = QueryOrchestrator(container, factory, registry, processor)
 

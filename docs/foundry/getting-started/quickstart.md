@@ -5,7 +5,9 @@ sidebar_position: 1
 # Quickstart
 
 Get the workspace installed and verified in under five minutes. This page is
-for **contributors** to this repo.
+for **contributors** to this repo. If you want to consume the published
+wheels from a downstream agent, see
+[Adopting these packages](../releases/adopting.md).
 
 ## Prerequisites
 
@@ -36,14 +38,16 @@ for **contributors** to this repo.
 Run the full local gate:
 
 ```bash
-just check    # ruff + bandit narrow set + ruff format + basedpyright
-just test     # pytest across all packages
+just check    # full gate: ruff lint + ruff format check + basedpyright + tests
+just test     # pytest looped per package, with a summary table
 ```
 
 Both should be clean against `develop`. A successful run looks like:
 
-- `just check` — no findings; basedpyright reports `0 errors, 0 warnings, 0 informations`
-- `just test` — 530+ tests pass; 1 skipped is expected (intentional)
+- `just check` — no findings; basedpyright reports `0 errors, 0 warnings, 0 informations`,
+  followed by a per-package summary table with all four packages `PASS` and every
+  package meeting its 70% coverage gate
+- `just test` — the same suite; skips and warnings are expected, failures are not
 
 If `just check` fails on a clean clone, the most likely cause is a stale
 `uv.lock` against a newer dev-deps floor; re-run `just setup`.
@@ -64,6 +68,14 @@ just version-minor foundry-agent-config
 just version-set foundry-agent-fastapi 0.3.0
 ```
 
+Confirm a built wheel actually installs and imports:
+
+```bash
+uv pip install packages/foundry-agent-core/dist/*.whl
+uv run python -c "import foundry_agent_core"
+```
+
 ## Where to go next
 
 - **[Local development](./local-development.md)** — daily workflow, per-package `just` recipes, consuming a local package from a sibling repo
+- **[Release channels](../releases/release-channels.md)** — RC vs. stable vs. manual dev builds
