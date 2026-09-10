@@ -19,8 +19,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "bandit[toml]==1.9.4",
-    "basedpyright==1.33.0",
-    "deptry==0.24.0",
+    "basedpyright==1.40.0",
+    "deptry==0.25.1",
     "pytest>=8.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.23",
