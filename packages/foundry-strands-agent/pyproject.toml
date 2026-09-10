@@ -35,7 +35,7 @@ dependencies = [
 # both. See openspec/changes/foundry-850-standardize-testing/design.md.
 [dependency-groups]
 dev = [
-    "basedpyright==1.33.0",
+    "basedpyright==1.40.0",
     "httpx>=0.28.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
