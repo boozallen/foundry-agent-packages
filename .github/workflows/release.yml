@@ -145,14 +145,18 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Download wheel from release
+      - name: Download wheels from releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ steps.tag.outputs.tag }}" \
-            --repo ${{ github.repository }} \
-            --pattern "*.whl" \
-            --dir /tmp/wheels
+          mkdir -p /tmp/wheels
+          for pkg in foundry-agent-core foundry-agent-config foundry-agent-fastapi foundry-strands-agent; do
+            tag=$(gh release list --repo ${{ github.repository }} --json tagName,publishedAt \
+              --jq "[.[] | select(.tagName | startswith(\"$pkg/\"))] | sort_by(.publishedAt) | last | .tagName")
+            if [ -n "$tag" ] && [ "$tag" != "null" ]; then
+              gh release download "$tag" --repo ${{ github.repository }} --pattern "*.whl" --dir /tmp/wheels --clobber
+            fi
+          done
 
       - name: Validate install and import
         run: |
