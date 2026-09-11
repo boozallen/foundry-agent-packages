@@ -70,7 +70,9 @@ jobs:
         run: uv run basedpyright packages/${{ steps.tag.outputs.package }}/src/
 
       - name: Test
-        run: uv run pytest packages/${{ steps.tag.outputs.package }}/tests/ -x -q
+        run: |
+          uv run pytest packages/${{ steps.tag.outputs.package }}/tests/ -x -q \
+            --cov=packages/${{ steps.tag.outputs.package }}/src/${{ steps.tag.outputs.module }}
 
       - name: Build wheel and sdist
         run: |
