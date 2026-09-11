@@ -89,7 +89,7 @@ describe the exact bits in the artifact — not a separately-resolved view.
   [release-channels.md](./release-channels.md) are for internal validation
   cycles and are not part of the OSS adoption flow.
 - **Read the relevant package CHANGELOG** at upgrade time. The root
-  [`CHANGELOG.md`](https://github.com/boozallen/foundry-agent-packages/blob/main/CHANGELOG.md)
+  [`CHANGELOG.md`](https://github.com/boozallen/foundry-agent-packages/blob/develop/CHANGELOG.md)
   cross-references each package's per-package changelog under
   `packages/<pkg>/CHANGELOG.md`.
 
@@ -102,5 +102,5 @@ describe the exact bits in the artifact — not a separately-resolved view.
   CVE ID, the affected package version, and your remediation deadline
 
 Security advisories should go through the private flow described in
-[`SECURITY.md`](https://github.com/boozallen/foundry-agent-packages/blob/main/SECURITY.md),
+[`SECURITY.md`](https://github.com/boozallen/foundry-agent-packages/blob/develop/SECURITY.md),
 not the public issue tracker.

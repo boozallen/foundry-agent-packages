@@ -54,7 +54,7 @@ resource limits (DISA STIG V-222612).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-core/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-core/CHANGELOG.md)
+- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-core/README.md)
+- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-core/CHANGELOG.md)
 - [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-agent-core)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/LICENSE)
+- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
