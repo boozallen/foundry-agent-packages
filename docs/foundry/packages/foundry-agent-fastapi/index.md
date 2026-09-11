@@ -67,7 +67,7 @@ return HTTP 422 (DISA STIG V-222609).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-fastapi/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-fastapi/CHANGELOG.md)
+- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-fastapi/README.md)
+- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-fastapi/CHANGELOG.md)
 - [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-agent-fastapi)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/LICENSE)
+- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)

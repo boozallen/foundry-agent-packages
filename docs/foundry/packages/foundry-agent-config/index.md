@@ -53,7 +53,7 @@ plus `bandit` narrow-set (DISA STIG V-222604).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/main/packages/foundry-agent-config/CHANGELOG.md)
+- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-config/README.md)
+- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-config/CHANGELOG.md)
 - [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-agent-config)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/main/LICENSE)
+- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
