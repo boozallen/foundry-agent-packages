@@ -130,5 +130,5 @@ extracts text, scores confidence, and normalizes the response.
 
 - [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-strands-agent/README.md)
 - [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-strands-agent/CHANGELOG.md)
-- [Source](https://github.com/boozallen/foundry-agent-packages/tree/main/packages/foundry-strands-agent)
+- [Source](https://github.com/boozallen/foundry-agent-packages/tree/develop/packages/foundry-strands-agent)
 - [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
