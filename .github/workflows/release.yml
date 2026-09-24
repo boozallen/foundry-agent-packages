@@ -28,15 +28,17 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        run: pip install uv
+        run: pip install uv==0.12.18
 
       - name: Install dependencies
         run: uv sync
@@ -95,9 +97,15 @@ jobs:
 
       - name: Install Grype
         run: |
-          curl -sSfL \
-            https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          set -euo pipefail
+          VERSION=0.119.0
+          ASSET="grype_${VERSION}_linux_amd64.tar.gz"
+          SHA256="3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b"
+          curl -sSfLO "https://github.com/anchore/grype/releases/download/v${VERSION}/${ASSET}"
+          echo "${SHA256}  ${ASSET}" | sha256sum -c -
+          tar -xzf "${ASSET}" grype
+          install -m 0755 grype /usr/local/bin/grype
+          rm -f "${ASSET}" grype
 
       - name: Run Grype scan
         id: grype
@@ -141,7 +149,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
