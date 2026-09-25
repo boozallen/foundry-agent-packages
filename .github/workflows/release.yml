@@ -158,7 +158,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/wheels
-          for pkg in foundry-agent-core foundry-agent-config foundry-agent-fastapi foundry-strands-agent; do
+          for pkg in foundry-agent-core foundry-agent-config foundry-agent-fastapi foundry-strands-agent foundry-aws-utilities foundry-auth; do
             tag=$(gh release list --repo ${{ github.repository }} --json tagName,publishedAt \
               --jq "[.[] | select(.tagName | startswith(\"$pkg/\"))] | sort_by(.publishedAt) | last | .tagName")
             if [ -n "$tag" ] && [ "$tag" != "null" ]; then
