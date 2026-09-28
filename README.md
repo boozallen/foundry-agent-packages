@@ -1,10 +1,6 @@
 # foundry-agent-packages
 
-![Project Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
-![Not Production Ready](https://img.shields.io/badge/production-not%20ready-red)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
-
-> **ALPHA RELEASE - NOT PRODUCTION READY.** APIs may change without notice.
 
 A uv-workspace monorepo of the shared Python libraries that Foundry-built
 agents install and extend. Each package is independently versioned and
