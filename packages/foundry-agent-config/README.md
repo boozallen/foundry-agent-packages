@@ -1,6 +1,5 @@
 # foundry-agent-config
 
-![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 YAML configuration loader with environment-variable overrides for
