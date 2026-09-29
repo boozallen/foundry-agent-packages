@@ -5,8 +5,10 @@ on:
     tags:
       - "*/v*"
 
-permissions:
-  contents: write
+# Safe default for any job that doesn't declare its own `permissions:`
+# block (e.g. a job added later without one) — falls back to no access
+# instead of the repository/org default GITHUB_TOKEN scope.
+permissions: {}
 
 env:
   PYTHON_VERSION: "3.13"
@@ -14,6 +16,8 @@ env:
 jobs:
   build-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Parse tag
         id: tag
@@ -136,6 +140,8 @@ jobs:
 
   install-validation:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: build-release
     steps:
       - name: Parse tag
