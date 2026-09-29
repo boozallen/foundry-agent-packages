@@ -5,6 +5,11 @@ on:
     tags:
       - "*/v*"
 
+# Safe default for any job that doesn't declare its own `permissions:`
+# block (e.g. a job added later without one) — falls back to no access
+# instead of the repository/org default GITHUB_TOKEN scope.
+permissions: {}
+
 env:
   PYTHON_VERSION: "3.13"
 
