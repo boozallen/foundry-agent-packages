@@ -5,15 +5,14 @@ on:
     tags:
       - "*/v*"
 
-permissions:
-  contents: write
-
 env:
   PYTHON_VERSION: "3.13"
 
 jobs:
   build-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Parse tag
         id: tag
@@ -136,6 +135,8 @@ jobs:
 
   install-validation:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: build-release
     steps:
       - name: Parse tag
