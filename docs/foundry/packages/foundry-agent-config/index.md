@@ -1,7 +1,7 @@
 # foundry-agent-config
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.1-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 YAML configuration loader with environment-variable overrides for

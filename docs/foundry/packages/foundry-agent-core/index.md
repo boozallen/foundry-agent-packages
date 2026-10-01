@@ -1,7 +1,7 @@
 # foundry-agent-core
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.1-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Framework-agnostic agent infrastructure: dependency-injection container,

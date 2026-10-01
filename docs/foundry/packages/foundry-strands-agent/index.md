@@ -1,7 +1,7 @@
 # foundry-strands-agent
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-2.6.0-blue)
+![Version](https://img.shields.io/badge/version-2.6.1-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 AWS Strands SDK adapter that implements the `foundry-agent-core`

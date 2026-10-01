@@ -60,6 +60,7 @@ explicit = true
 
 [tool.uv.sources]
 foundry-agent-core = { index = "my-index" }
+foundry-agent-config = { index = "my-index" }
 foundry-strands-agent = { index = "my-index" }
 ```
 

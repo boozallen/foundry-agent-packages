@@ -1,7 +1,7 @@
 # foundry-agent-fastapi
 
 ![Status: Available](https://img.shields.io/badge/status-available-brightgreen)
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.1-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Reusable FastAPI middleware, health-check endpoint, API models, and
