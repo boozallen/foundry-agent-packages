@@ -59,8 +59,10 @@ just build foundry-agent-core    # one package
 just build-all                   # all four
 ```
 
-Wheels land under `packages/<pkg>/dist/`. Per-package version bumps go
-through `scripts/bump_version.py`:
+`uv build` resolves the workspace root even when run from inside a package
+directory, so wheels always land in the repo-root `dist/` - never under
+`packages/<pkg>/dist/`. Per-package version bumps go through
+`scripts/bump_version.py`:
 
 ```bash
 just version-patch foundry-agent-core    # 0.2.4 → 0.2.5
@@ -71,7 +73,7 @@ just version-set foundry-agent-fastapi 0.3.0
 Confirm a built wheel actually installs and imports:
 
 ```bash
-uv pip install packages/foundry-agent-core/dist/*.whl
+uv pip install dist/foundry_agent_core-*.whl
 uv run python -c "import foundry_agent_core"
 ```
 
