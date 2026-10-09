@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Outbound mTLS support via `FOUNDRY_TLS_CLIENT_CERTFILE` and
-  `FOUNDRY_TLS_CLIENT_KEYFILE` env vars (FOUNDRY-722)
+  `FOUNDRY_TLS_CLIENT_KEYFILE` env vars
 - Fail-fast validation when configured cert/key files are missing
 - Graceful degradation (warning) when only one of the two vars is set
 
@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** `ChatHistoryManager` and orchestrator session archival
-  behavior (FOUNDRY-711)
+  behavior
 
 ## [1.0.0] - 2026-06-29
 
