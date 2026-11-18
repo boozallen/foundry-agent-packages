@@ -56,7 +56,7 @@ dependencies on other packages in this repo.**
 ## [`foundry-auth`](./foundry-auth/index.md)
 
 OIDC authentication — authorization-code + PKCE flow, protocol-based
-session storage (SQLite implemented, Redis planned), a FastAPI
+session storage (SQLite), a FastAPI
 router factory, auth dependencies, and WebSocket session validation.
 **Depends on:** `foundry-agent-core`.
 

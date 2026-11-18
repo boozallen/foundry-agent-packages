@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 OIDC authentication for Foundry agents: authorization-code + PKCE flow,
-protocol-based session storage (SQLite implemented, Redis planned),
+protocol-based session storage (SQLite),
 a FastAPI router factory, auth dependencies, and WebSocket session
 validation. **Depends on:** [`foundry-agent-core`](../foundry-agent-core/index.md).
 
@@ -46,7 +46,7 @@ for adding auth to an existing FastAPI service in three lines of code.
 | Surface | Highlights |
 |---------|------------|
 | [OIDC flow](../../../../packages/foundry-auth/src/foundry_auth/oidc.py) | Authorization-code + PKCE, prefix-based configuration for multiple service configs |
-| [Session storage](../../../../packages/foundry-auth/src/foundry_auth/session.py) | `SessionStore` protocol, `SQLiteSessionStore` (implemented), `RedisSessionStore` (stub) |
+| [Session storage](../../../../packages/foundry-auth/src/foundry_auth/session.py) | `SessionStore` protocol, `SQLiteSessionStore` |
 | [FastAPI integration](../../../../packages/foundry-auth/src/foundry_auth/routers.py) | `create_auth_router`, `create_require_session`, `create_optional_session` |
 | [WebSocket support](../../../../packages/foundry-auth/src/foundry_auth/websocket.py) | `register_connection`, session validation loop, connection cleanup on session expiry/deletion |
 

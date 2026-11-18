@@ -101,9 +101,8 @@ If the path is invalid, session creation will fail silently or raise an OS error
 | `SESSION_TTL_HOURS` | No | `24` | Session lifetime in hours |
 | `TOKEN_REFRESH_THRESHOLD_MINUTES` | No | `5` | Minutes before expiry to trigger refresh |
 | `SECURE_COOKIES` | No | `true` | Require HTTPS for session cookies |
-| `SESSION_STORE_TYPE` | No | `sqlite` | Session store backend (`sqlite` or `redis`) |
+| `SESSION_STORE_TYPE` | No | `sqlite` | Session store backend (`sqlite`) |
 | `SESSION_STORE_PATH` | No | `./data/sessions.db` | SQLite database file path |
-| `REDIS_URL` | No | `redis://localhost:6379` | Redis URL (if `SESSION_STORE_TYPE=redis`) |
 | `WEBSOCKET_SESSION_CHECK_INTERVAL_SECONDS` | No | `300` | WebSocket validation interval |
 | `WEBSOCKET_MAX_CONNECTION_SECONDS` | No | `3600` | Max WebSocket connection duration |
 

@@ -7,7 +7,6 @@ Security considerations and best practices for foundry-auth deployments.
 > **CRITICAL: The following secrets are for local development only.**
 >
 > - `OIDC_CLIENT_SECRET` — OAuth client secret
-> - `REDIS_URL` — May contain authentication credentials
 > - Keycloak admin password (`admin`/`admin`)
 > - Test user credentials (`testuser`/`testpass`)
 >
@@ -39,7 +38,6 @@ Inject secrets at runtime via environment variables populated by your deployment
 |--------|-------------------|-------|
 | `OIDC_CLIENT_SECRET` | Every 90 days | Use your OIDC provider's recommended schedule; 90 days is a generic baseline |
 | Database credentials | Every 90 days | Use connection poolers that support rotation |
-| `REDIS_URL` credentials | Every 90 days | Ensure all replicas update atomically |
 
 ### Environment Separation
 
@@ -48,8 +46,8 @@ Maintain completely separate credentials for each environment:
 | Environment | OIDC Provider | Client ID | Session Store |
 |-------------|---------------|-----------|---------------|
 | Development | Local Keycloak | `foundry-dev` | SQLite (local) |
-| Staging | Staging IdP | `foundry-staging` | Redis (staging cluster) |
-| Production | Production IdP | `foundry-prod` | Redis (production cluster) |
+| Staging | Staging IdP | `foundry-staging` | SQLite (staging) |
+| Production | Production IdP | `foundry-prod` | SQLite (production) |
 
 Never reuse client secrets, database credentials, or signing keys across environments.
 

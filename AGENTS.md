@@ -65,7 +65,7 @@ just test            # unit + integration tiers, looped per package
 | `foundry-agent-fastapi` | CORS / error / logging middleware, request/response models, mappers, health router | `foundry-agent-core` |
 | `foundry-strands-agent` | AWS Strands SDK adapter - `StrandsAgentBackend`, factory, orchestrator, tool loader, chat historian | `foundry-agent-core`, `foundry-agent-config` |
 | `foundry-aws-utilities` | DynamoDB, S3, and Bedrock Knowledge Base MCP servers | _(none)_ |
-| `foundry-auth` | OIDC authentication - authorization-code + PKCE flow, session storage (SQLite/Redis), FastAPI router factory, auth dependencies, WebSocket session validation | `foundry-agent-core` |
+| `foundry-auth` | OIDC authentication - authorization-code + PKCE flow, session storage (SQLite), FastAPI router factory, auth dependencies, WebSocket session validation | `foundry-agent-core` |
 
 ## File Structure
 

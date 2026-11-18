@@ -29,7 +29,7 @@ Example Usage:
 
     @app.on_event("startup")
     async def startup():
-        start_session_validation_task(session_store)
+        await start_session_validation_task(session_store)
 """
 
 import asyncio

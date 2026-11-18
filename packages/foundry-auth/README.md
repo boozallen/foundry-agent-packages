@@ -27,7 +27,7 @@ Authentication package for Foundry platform, providing OIDC authentication with 
 ## Features
 
 - **OIDC Authentication**: OAuth 2.0 / OIDC integration with authorization code flow and PKCE
-- **Session Management**: Protocol-based session storage with SQLite implementation (Redis planned)
+- **Session Management**: Protocol-based session storage with SQLite implementation
 - **Prefix-Based Configuration**: Support multiple service configurations via environment variable prefixes
 - **Security**: Session ID rotation, SameSite=Lax cookies, automatic token refresh
 - **FastAPI Integration**: Ready-to-use router factory and authentication dependencies
@@ -50,7 +50,7 @@ export FRONTEND_URL="http://localhost:3000"
 export CORS_ALLOWED_ORIGINS="http://localhost:3000,http://localhost:5173"
 
 # Session store configuration
-export SESSION_STORE_TYPE="sqlite"  # or "redis"
+export SESSION_STORE_TYPE="sqlite"
 export SESSION_STORE_PATH="./data/sessions.db"  # for SQLite
 ```
 
@@ -265,13 +265,6 @@ from foundry_auth import SQLiteSessionStore
 store = SQLiteSessionStore(db_path="./data/sessions.db")
 ```
 
-#### `RedisSessionStore`
-
-Redis support is planned but not yet available. Use `SQLiteSessionStore` for all deployments.
-
-**Raises:**
-- `NotImplementedError`: Raises on instantiation until Redis support is implemented
-
 #### `OAuthState`
 
 Dataclass representing temporary OAuth state during authentication flow.
@@ -294,15 +287,14 @@ Factory function to create a configured session store based on environment varia
 - `prefix` (str): Optional prefix for environment variable names (e.g., `"SERVICE_A_"`)
 
 **Returns:**
-- `SessionStore`: Configured session store instance (SQLite or Redis)
+- `SessionStore`: Configured session store instance (SQLite)
 
 **Raises:**
 - `ValueError`: If `SESSION_STORE_TYPE` has an unsupported value
 
 **Environment Variables:**
-- `SESSION_STORE_TYPE` (default: "sqlite"): Store type ("sqlite" or "redis")
+- `SESSION_STORE_TYPE` (default: "sqlite"): Store type ("sqlite")
 - `SESSION_STORE_PATH` (default: "./data/sessions.db"): Path for SQLite
-- `REDIS_URL` (default: "redis://localhost:6379"): URL for Redis
 
 **Example:**
 ```python
@@ -506,9 +498,8 @@ For copy-paste-ready templates, see `docs/env.development` and `docs/env.product
 | `SESSION_TTL_HOURS` | Session lifetime in hours | `24` |
 | `TOKEN_REFRESH_THRESHOLD_MINUTES` | Minutes before token expiry to trigger refresh | `5` |
 | `SECURE_COOKIES` | Enable secure cookie flag (requires HTTPS) | `true` |
-| `SESSION_STORE_TYPE` | Session store backend ("sqlite" or "redis") | `sqlite` |
+| `SESSION_STORE_TYPE` | Session store backend ("sqlite") | `sqlite` |
 | `SESSION_STORE_PATH` | SQLite database file path | `./data/sessions.db` |
-| `REDIS_URL` | Redis connection URL (if using Redis) | `redis://localhost:6379` |
 | `WEBSOCKET_SESSION_CHECK_INTERVAL_SECONDS` | WebSocket validation interval | `300` |
 | `WEBSOCKET_MAX_CONNECTION_SECONDS` | Maximum WebSocket connection duration | `3600` |
 
