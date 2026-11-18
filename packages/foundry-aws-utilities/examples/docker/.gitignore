@@ -1,0 +1,17 @@
+# Environment files
+.env
+.env.*
+env.local
+
+# LocalStack data persistence
+localstack-data/
+
+# Docker build artifacts
+.docker/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

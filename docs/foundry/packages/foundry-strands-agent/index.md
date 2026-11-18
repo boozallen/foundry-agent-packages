@@ -4,7 +4,7 @@
 ![Version](https://img.shields.io/badge/version-2.6.1-blue)
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
-AWS Strands SDK adapter that implements the `foundry-agent-core`
+AWS Strands SDK adapter that implements the [`foundry-agent-core`](../foundry-agent-core/index.md)
 protocol surface. The core feature is an autonomous agent loop:
 `AgentService` receives a query, creates a `strands.Agent` with the
 configured tools, and lets the agent decide which tools to call and when
@@ -17,7 +17,7 @@ protocol-based factory.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+See [Adopting these packages](../../releases/adopting.md) for
 the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -37,7 +37,7 @@ from foundry_strands_agent import (
 from foundry_agent_core import AgentRequest
 
 async def main():
-    config = StrandsAgentConfig()  # default: bedrock + claude-sonnet-4
+    config = StrandsAgentConfig()  # default: bedrock + claude-haiku-5-5
     container = create_default_container(config)
 
     service = create_agent_service(container)
@@ -128,7 +128,7 @@ extracts text, scores confidence, and normalizes the response.
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-strands-agent/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-strands-agent/CHANGELOG.md)
-- [Source](https://github.com/boozallen/foundry-agent-packages/tree/develop/packages/foundry-strands-agent)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
+- [README](../../../../packages/foundry-strands-agent/README.md)
+- [Changelog](../../../../packages/foundry-strands-agent/CHANGELOG.md)
+- [Source](../../../../packages/foundry-strands-agent/)
+- [License (Apache-2.0)](../../../../LICENSE)

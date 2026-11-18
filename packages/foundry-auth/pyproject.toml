@@ -1,0 +1,124 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foundry-auth"
+version = "0.3.0"
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
+description = "Authentication package for Foundry platform"
+authors = [{ name = "Booz Allen Hamilton" }]
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "fastapi>=0.138.0,<0.139",
+    "foundry-agent-core>=1.1.0",
+    "httpx>=0.28.1,<0.29",
+    "cryptography>=48.0.1",
+    "starlette>=1.3.1",
+]
+
+[project.optional-dependencies]
+redis = [
+    "redis>=5.0.0,<6",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.33.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=4.1.0",
+    "respx>=0.23.0",
+    "ruff==0.14.5",
+    "uvicorn>=0.30.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foundry_auth"]
+
+[tool.ruff]
+# Inherit workspace ruff config (line-length, target-version, etc.) so this
+# package opts in to its own lint rules without re-stating shared settings.
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+# STIG V-222604 (CCI-001310) — prohibit command-injection sinks. Enforced in CI.
+extend-select = ["S102", "S307", "S602", "S603", "S604", "S605", "S606", "S607"]
+
+# `extend` does not merge `per-file-ignores` tables with the root's — this
+# package's table below must restate the root's own `packages/*/tests/**`
+# entries (ARG001, ARG005, B011, B017, D106, T201) or they are silently lost
+# for this package. See root pyproject.toml [tool.ruff.lint.per-file-ignores].
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "ARG001",  # pytest fixtures often appear unused but trigger DI
+    "ARG005",  # mock lambdas absorb **kwargs to match call signatures
+    "B011",    # assert False
+    "B017",    # pytest.raises(Exception) — fine in error-path tests
+    "D106",    # nested model classes in test fixtures don't need docstrings
+    "T201",    # print
+    # Test fixtures construct synthetic OAuth/session tokens (e.g.
+    # access_token="token") to exercise token-handling code paths; the
+    # S105/S106/S107 hardcoded-credential heuristic matches on the
+    # "token"/"secret" argument names themselves, not on whether the value is
+    # a real secret, so it always fires here. No such fixtures exist in src/
+    # (verified: `ruff check src` reports zero S105/S106/S107 matches).
+    "S105",
+    "S106",
+    "S107",
+]
+
+# The unit/integration split is by DIRECTORY (`tests/unit/`, `tests/integration/`),
+# not by marker, so addopts carries no marker expression. The `integration` marker
+# below stays declared as a trait tag; nothing selects on it.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src"]
+addopts = "-v --tb=short --strict-markers --strict-config --import-mode=importlib --cov=src/foundry_auth --cov-report=term-missing --cov-report=html:htmlcov/foundry_auth --cov-fail-under=70"
+markers = [
+    "integration: test requires an external service, network access, or real credentials (trait tag only; the tier is set by tests/integration/)",
+]
+# Noise from FastAPI's TestClient (built on starlette), which this package's
+# router/websocket tests exercise directly - not from this package's own code.
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore::DeprecationWarning:starlette.testclient",
+]
+
+[tool.coverage.run]
+source = ["src/foundry_auth"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+# Mirrors the workspace root's [tool.basedpyright] so `just type-check` run
+# from THIS directory resolves the same settings the root run uses (basedpyright
+# does not walk up to a parent pyproject.toml the way ruff `extend` does).
+[tool.basedpyright]
+pythonVersion = "3.13"
+include = ["src"]
+exclude = ["**/build", "**/dist", "**/.venv", "**/__pycache__"]
+typeCheckingMode = "basic"

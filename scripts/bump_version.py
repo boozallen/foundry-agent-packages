@@ -37,7 +37,7 @@ def get_pyproject_path(package_name: str) -> Path:
 
 
 def get_version(pyproject_path: Path) -> str:
-    content = pyproject_path.read_text()
+    content = pyproject_path.read_text(encoding="utf-8")
     match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
     if not match:
         print(f"Error: Could not find version in {pyproject_path}", file=sys.stderr)
@@ -46,7 +46,7 @@ def get_version(pyproject_path: Path) -> str:
 
 
 def set_version(pyproject_path: Path, new_version: str) -> None:
-    content = pyproject_path.read_text()
+    content = pyproject_path.read_text(encoding="utf-8")
     updated = re.sub(
         r'^version\s*=\s*"[^"]+"',
         f'version = "{new_version}"',
@@ -54,7 +54,7 @@ def set_version(pyproject_path: Path, new_version: str) -> None:
         count=1,
         flags=re.MULTILINE,
     )
-    pyproject_path.write_text(updated)
+    pyproject_path.write_text(updated, encoding="utf-8")
 
 
 def bump_version(current: str, part: str) -> str:
@@ -101,7 +101,7 @@ def main() -> None:
     if command in ("patch", "minor", "major"):
         new_version = bump_version(current_version, command)
         set_version(pyproject_path, new_version)
-        print(f"{package_name}: {current_version} → {new_version}")
+        print(f"{package_name}: {current_version} to {new_version}")
         return
 
     if command == "set":
@@ -114,7 +114,7 @@ def main() -> None:
             print("Expected: X.Y.Z or X.Y.Z-prerelease", file=sys.stderr)
             sys.exit(1)
         set_version(pyproject_path, new_version)
-        print(f"{package_name}: {current_version} → {new_version}")
+        print(f"{package_name}: {current_version} to {new_version}")
         return
 
     print(f"Error: Unknown command '{command}'", file=sys.stderr)

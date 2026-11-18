@@ -47,6 +47,10 @@ Thumbs.db
 *.tar.gz
 .memsearch/
 
+# MLflow scratch — written by tests when the [databricks] extra is installed
+mlruns/
+mlflow.db
+
 # foundry-stigkit generated output (assessment JSON and decision log are tracked)
 **/security/*.html
 **/security/*.bak

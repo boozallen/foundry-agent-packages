@@ -5,7 +5,7 @@
 A uv-workspace monorepo of the shared Python libraries that Foundry-built
 agents install and extend. Each package is independently versioned and
 ships as a wheel attached to a GitHub Release; adopters host the wheels
-in their own internal index. Composition roots like `strands-base-agent`
+in their own internal index. Composition roots like [`strands-base-agent`](https://github.com/boozallen/strands-base-agent)
 wire these libraries into a runnable service - they do not re-implement
 what lives here.
 
@@ -17,13 +17,20 @@ what lives here.
 | [`foundry-agent-config`](packages/foundry-agent-config) | YAML loader with env-var overrides, bounded input controls | _(none)_ |
 | [`foundry-agent-fastapi`](packages/foundry-agent-fastapi) | CORS / error / logging middleware, request models, health router | `foundry-agent-core` |
 | [`foundry-strands-agent`](packages/foundry-strands-agent) | AWS Strands SDK adapter - backend, factory, orchestrator, tool loader | `foundry-agent-core`, `foundry-agent-config` |
+| [`foundry-aws-utilities`](packages/foundry-aws-utilities) | DynamoDB, S3, and Bedrock Knowledge Base MCP servers | _(none)_ |
+| [`foundry-auth`](packages/foundry-auth) | OIDC authentication - authorization-code + PKCE flow, session storage, FastAPI router factory | `foundry-agent-core` |
+
 
 ```
 foundry-agent-core ◄── foundry-agent-fastapi
-       ▲
+       ▲          ▲
+       │          └──────── foundry-auth
        ├──────────────── foundry-strands-agent
        │                        ▲
+       │                        │
 foundry-agent-config ───────────┘
+
+foundry-aws-utilities (standalone - no dependents here)
 ```
 
 ## Requirements
@@ -55,7 +62,7 @@ just build foundry-agent-core         # build a single wheel
 
 `just --list` shows the full recipe surface, grouped as *Setup & Dependencies*,
 *Code Quality*, *Testing*, and *Building & Release* - the same grouping and shared
-recipe names used by the sibling `temporal-packages` repo.
+recipe names used by the sibling [`temporal-packages`](https://github.com/boozallen/temporal-packages) repo.
 
 ## Documentation
 
@@ -66,6 +73,7 @@ recipe names used by the sibling `temporal-packages` repo.
 | Understand the codebase (layout, packages, conventions) | [AGENTS.md](AGENTS.md) |
 | See per-package summaries | [Packages](docs/foundry/packages/index.md) |
 | Consume these packages from a downstream repo | [Adopting](docs/foundry/releases/adopting.md) |
+| Understand the security posture | [Security posture](docs/foundry/index.md#security-posture) |
 | Contribute changes | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Release model
@@ -78,9 +86,7 @@ internal index (no public PyPI yet).
 - Tag a release on `main` → builds wheels + Syft SBOM + Grype scan per
   changed package and attaches them to the GitHub Release
 
-See [docs/foundry/releases/release-channels.md](docs/foundry/releases/release-channels.md)
-for internal RC/dev publishing and [docs/foundry/releases/adopting.md](docs/foundry/releases/adopting.md)
-for the adopter flow.
+See Adopting these packages for the adopter flow.
 
 ## License
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.2.3 - 2026-11-18
+
+### Fixes
+
+- remove stale alpha status from docs and package metadata
+- mask session identifiers and query content in agent logs
+- UTF-8 dict byte caps and public validate_bounded_dict
+
+### Maintenance
+
+- Security and maintenance updates (2)
+- Packaging and dependency updates
+
 ## [1.2.0] - 2026-09-08
 
 ### Changed

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for mappers and request/response models."""
 
+import json
 from datetime import datetime
 
 import pytest
@@ -16,7 +17,7 @@ from foundry_agent_fastapi.mappers import (
     domain_error_to_api_response,
     domain_response_to_api,
 )
-from foundry_agent_fastapi.models.requests import QueryAPIRequest
+from foundry_agent_fastapi.models.requests import _MAX_CONTEXT_BYTES, QueryAPIRequest
 from foundry_agent_fastapi.models.responses import QueryAPIResponse
 
 
@@ -154,7 +155,7 @@ def test_query_api_request_validation_context_not_dict():
 
 def test_query_api_request_validation_context_non_string_keys():
     """Test that context with non-string keys is rejected."""
-    with pytest.raises(PydanticValidationError, match="All context keys must be strings"):
+    with pytest.raises(PydanticValidationError, match="Context keys must be strings"):
         QueryAPIRequest(query="test", context={1: "value"})  # type: ignore
 
 
@@ -169,6 +170,27 @@ def test_query_api_request_validation_context_key_too_long():
     """Test that context with oversized key is rejected."""
     with pytest.raises(PydanticValidationError):
         QueryAPIRequest(query="test", context={"x" * 129: "value"})
+
+
+@pytest.mark.parametrize("char", ["λ", "😀"])
+def test_query_api_request_context_non_ascii_at_byte_cap_accepted(char, utf8_sized_dict):
+    r"""The context byte cap counts UTF-8 bytes, not ``\uXXXX`` escapes."""
+    context = utf8_sized_dict(char, _MAX_CONTEXT_BYTES)
+    assert len(json.dumps(context, ensure_ascii=False).encode("utf-8")) == _MAX_CONTEXT_BYTES
+    assert len(json.dumps(context)) > _MAX_CONTEXT_BYTES
+    assert QueryAPIRequest(query="test", context=context).context == context
+
+
+@pytest.mark.parametrize("char", ["λ", "😀"])
+def test_query_api_request_context_non_ascii_over_byte_cap_rejected(char, utf8_sized_dict):
+    """A non-ASCII context one UTF-8 byte over the cap is rejected."""
+    with pytest.raises(PydanticValidationError, match="Context serializes above"):
+        QueryAPIRequest(query="test", context=utf8_sized_dict(char, _MAX_CONTEXT_BYTES + 1))
+
+
+def test_query_api_request_context_lone_surrogate_accepted():
+    """A lone surrogate, which JSON input can carry, is sized rather than rejected."""
+    assert QueryAPIRequest(query="test", context={"k": "\ud83d"}).context == {"k": "\ud83d"}
 
 
 def test_query_api_request_validation_max_results_out_of_range():

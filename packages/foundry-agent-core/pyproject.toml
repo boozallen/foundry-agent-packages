@@ -4,16 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foundry-agent-core"
-version = "1.2.0"
+version = "1.4.0"
 license = "Apache-2.0"
 license-files = ["LICENSE*", "NOTICE*"]
 description = "Foundry Agent Core — DI container, protocol definitions, exception hierarchy, workflow/retry"
 authors = [{ name = "Booz Allen Hamilton" }]
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = ["pydantic>=2.0", "cryptography>=44.0"]
@@ -22,7 +24,7 @@ dependencies = ["pydantic>=2.0", "cryptography>=44.0"]
 # (`uv run pytest` / `ruff` / `basedpyright` from THIS directory) resolve on a
 # cold clone without pointing uv at the workspace root. Versions mirror the
 # workspace root's `[dependency-groups] dev` so a single resolution satisfies
-# both. See openspec/changes/foundry-850-standardize-testing/design.md.
+# both.
 [dependency-groups]
 dev = [
     "basedpyright==1.33.0",
@@ -41,12 +43,12 @@ packages = ["src/foundry_agent_core"]
 extend = "../../pyproject.toml"
 
 [tool.ruff.lint]
-# STIG V-222604 (CCI-001310) prohibits command-injection sinks.
+# STIG V-222604 (CCI-001310) — prohibit command-injection sinks. Enforced in CI.
 # See README.md § "Security policy: command injection".
 extend-select = ["S102", "S307", "S602", "S603", "S604", "S605", "S606", "S607"]
 
 # Pytest + coverage config is package-local so each package owns its own
-# coverage source path and threshold. See docs/foundry/internal/coverage.md.
+# coverage source path and threshold.
 # --cov-fail-under enforces the 70% threshold on the pytest invocation itself
 # (the coverage.report fail_under below only gates `coverage report`/`html`).
 # The unit/integration split is by DIRECTORY (`tests/unit/`,
@@ -81,7 +83,8 @@ show_missing = true
 # from THIS directory resolves the same settings the root run uses (basedpyright
 # does not walk up to a parent pyproject.toml the way ruff `extend` does).
 [tool.basedpyright]
-pythonVersion = "3.13"
+# Check against the floor this package ships (3.11), not the workspace default.
+pythonVersion = "3.11"
 include = ["src"]
 exclude = ["**/build", "**/dist", "**/.venv", "**/__pycache__"]
 typeCheckingMode = "basic"

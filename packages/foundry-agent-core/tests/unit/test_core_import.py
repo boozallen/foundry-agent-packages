@@ -256,6 +256,37 @@ def test_agent_request_context_oversized_payload_rejected():
         AgentRequest(query="ok", context={"k": big_value})
 
 
+@pytest.mark.parametrize("char", ["λ", "😀"])
+def test_agent_request_context_non_ascii_at_byte_cap_accepted(char, utf8_sized_dict):
+    r"""STIG V-222612: the byte cap counts UTF-8 bytes, not ``\uXXXX`` escapes."""
+    import json
+
+    from foundry_agent_core.types import _MAX_DICT_BYTES, AgentRequest
+
+    context = utf8_sized_dict(char, _MAX_DICT_BYTES)
+    assert len(json.dumps(context, ensure_ascii=False).encode("utf-8")) == _MAX_DICT_BYTES
+    assert len(json.dumps(context)) > _MAX_DICT_BYTES
+    assert AgentRequest(query="ok", context=context).context == context
+
+
+@pytest.mark.parametrize("char", ["λ", "😀"])
+def test_agent_request_context_non_ascii_over_byte_cap_rejected(char, utf8_sized_dict):
+    """STIG V-222612: a non-ASCII context one UTF-8 byte over the cap is rejected."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from foundry_agent_core.types import _MAX_DICT_BYTES, AgentRequest
+
+    with pytest.raises(PydanticValidationError, match="serializes above"):
+        AgentRequest(query="ok", context=utf8_sized_dict(char, _MAX_DICT_BYTES + 1))
+
+
+def test_agent_request_context_lone_surrogate_accepted():
+    """STIG V-222612: a lone surrogate, which JSON input can carry, is sized rather than rejected."""
+    from foundry_agent_core.types import AgentRequest
+
+    assert AgentRequest(query="ok", context={"k": "\ud83d"}).context == {"k": "\ud83d"}
+
+
 def test_agent_response_metadata_oversized_payload_rejected():
     """STIG V-222612: AgentResponse rejects metadata whose JSON payload is too big."""
     from pydantic import ValidationError as PydanticValidationError

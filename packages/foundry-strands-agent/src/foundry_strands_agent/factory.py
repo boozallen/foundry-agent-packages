@@ -15,29 +15,41 @@ import asyncio
 import logging
 import os
 import re
+import types
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, NoReturn
+from urllib.parse import urlsplit
 
+import httpx
 from botocore.config import Config
 from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
+from strands import tool as strands_tool
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.agent.state import AgentState
 from strands.models import BedrockModel, Model
 from strands.models.openai import OpenAIModel
-from strands.session import S3SessionManager, SessionManager
+from strands.session import SessionManager
+from strands.tools.loader import load_tools_from_module as strands_load_tools_from_module
 from strands.tools.mcp import MCPClient
+from strands.types.tools import AgentTool
 from strands_tools.a2a_client import A2AClientToolProvider
 
 from foundry_agent_core import AgentCreationError, DependencyContainer, ExternalServiceError, mask_session_id
 from foundry_agent_core.encryption import load_encryption_key
-from foundry_strands_agent.config.models import AgentConfig, StrandsSessionManagerType
+from foundry_strands_agent.config.models import _MAX_SESSION_ID_LEN, AgentConfig, StrandsSessionManagerType
 from foundry_strands_agent.encrypted_session import EncryptedFileSessionManager
+from foundry_strands_agent.exceptions import raise_with_correlation_id
+from foundry_strands_agent.mcp_reconnect import ReconnectingMCPClient
 from foundry_strands_agent.protocols import (
     AgentFactory,
     AgentToolRegistry,
 )
 from foundry_strands_agent.protocols.agent_factory import ToolFunction
+from foundry_strands_agent.s3_session import GuardedS3SessionManager
+from foundry_strands_agent.session_guard import DanglingToolUseMode
 from foundry_strands_agent.tls import create_mcp_http_client, create_tls_context
 from foundry_strands_agent.tool_loader import load_tool_from_file, load_tool_from_module
 
@@ -47,6 +59,7 @@ logger = logging.getLogger(__name__)
 def _default_file_session_manager(
     session_id: str,
     storage_dir: str | None = None,
+    dangling_tool_use_mode: DanglingToolUseMode = "sanitize",
     **_kwargs: Any,
 ) -> SessionManager:
     encryption_key = load_encryption_key()
@@ -54,6 +67,7 @@ def _default_file_session_manager(
         encryption_key=encryption_key,
         session_id=session_id,
         storage_dir=storage_dir,
+        dangling_tool_use_mode=dangling_tool_use_mode,
     )
     logger.info(
         "Created encrypted file session manager",
@@ -67,6 +81,7 @@ def _default_s3_session_manager(
     s3_bucket: str | None = None,
     s3_prefix: str | None = None,
     s3_region: str | None = None,
+    dangling_tool_use_mode: DanglingToolUseMode = "sanitize",
     **_kwargs: Any,
 ) -> SessionManager:
     if not s3_bucket:
@@ -74,11 +89,12 @@ def _default_s3_session_manager(
             "session_s3_bucket is required for S3SessionManager",
             context={"session_type": "s3", "session_s3_bucket": s3_bucket},
         )
-    session_manager = S3SessionManager(
+    session_manager = GuardedS3SessionManager(
         session_id=session_id,
         bucket=s3_bucket,
         prefix=s3_prefix or "",
-        region=s3_region,
+        region_name=s3_region,
+        dangling_tool_use_mode=dangling_tool_use_mode,
     )
     logger.info(
         "Created S3 session manager",
@@ -96,6 +112,7 @@ def _default_s3_session_manager(
 _BEDROCK_TEMPERATURE_REJECTING_MODEL_SUBSTRINGS = (
     "claude-opus-5",
     "claude-sonnet-5",
+    "claude-haiku-5",
     "claude-fable-5",
     "claude-mythos-5",
     "claude-mythos-preview",
@@ -127,6 +144,87 @@ def _bedrock_model_rejects_temperature(model_id: str, extra_reject_models: Seque
     if not extra_reject_models:
         return False
     return bool(_compile_temperature_reject_pattern(extra_reject_models).search(lowered))
+
+
+_ENV_VAR_REFERENCE_PATTERN = re.compile(r"\$\{(\w+)\}")
+
+# AgentBuilder.build() session ids can come from untrusted callers (an A2A
+# context id) and become a storage path segment. The id is used as is, so
+# destroy_session() and chat history lookups find the session by the same id.
+# Only ids that are a valid path segment on every OS are allowed:
+# - Only characters valid in file names on every OS.
+# - No trailing ".", because Windows strips it, so "a." and "a" would collide.
+# - At most 128 characters, the same cap as StrandsAgentConfig.session_id, so
+#   any id create_agent() accepts by length also works here. With the default
+#   storage directory that keeps the session file path under Windows MAX_PATH
+#   (260), but a long session_storage_dir can still exceed it.
+# Ids that differ only in letter case share a directory on case-insensitive
+# file systems (macOS and Windows defaults). That is accepted: reaching a
+# session that way requires already knowing its id, and S3 is case-sensitive.
+_BUILD_SESSION_ID_MAX_LEN = _MAX_SESSION_ID_LEN
+_BUILD_SESSION_ID_PATTERN = re.compile(rf"[A-Za-z0-9._-]{{0,{_BUILD_SESSION_ID_MAX_LEN - 1}}}[A-Za-z0-9_-]")
+
+# The context id strands' A2AServer passes to agent_factory when it builds the
+# agent-card agent at server construction (strands.multiagent.a2a.server
+# _AGENT_CARD_CONTEXT_ID). Kept as a literal because importing the SDK's A2A
+# server here would load its whole HTTP stack for every factory user; a unit
+# test pins it to the SDK value.
+_A2A_AGENT_CARD_CONTEXT_ID = "__agent_card__"
+
+
+def _interpolate_env_vars(headers: dict[str, str] | None) -> dict[str, str] | None:
+    """Substitute ${VAR} references in MCP header values with the matching environment variable.
+
+    Raises ExternalServiceError on an unresolved reference so a missing variable fails loudly
+    instead of sending the literal "${VAR}" string to the MCP server.
+    """
+    if headers is None:
+        return None
+
+    def _replace(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        value = os.environ.get(var_name)
+        if value is None:
+            raise ExternalServiceError(
+                f"MCP header references undefined environment variable '{var_name}'",
+                context={"env_var": var_name},
+            )
+        return value
+
+    return {key: _ENV_VAR_REFERENCE_PATTERN.sub(_replace, value) for key, value in headers.items()}
+
+
+def _destination_host(url: str) -> str:
+    """Return `scheme://host[:port]` for a connection destination, for logging.
+
+    Strips userinfo, path, query, and fragment so a credential embedded in a
+    server url (`http://user:pass@host`) or in its path/query is never logged,  # trufflehog:ignore
+    per SRG-APP-000095 (log destination IP addresses / hosts of outbound
+    connections) without becoming a new credential-leak sink.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "invalid-url"
+    if not parts.hostname:
+        return "invalid-url"
+    host = parts.hostname if not parts.port else f"{parts.hostname}:{parts.port}"
+    return f"{parts.scheme}://{host}" if parts.scheme else host
+
+
+def _raise_mcp_error(log_message: str, *, server_name: str, server_url: str) -> NoReturn:
+    """Raise an ExternalServiceError for an MCP server failure via raise_with_correlation_id.
+
+    A secret (e.g. an interpolated MCP header value echoed back by the HTTP transport) may be
+    present in the real exception's message; server_name/server_url are the only safe context
+    carried into the raised error, per raise_with_correlation_id's contract.
+    """
+    raise_with_correlation_id(
+        ExternalServiceError,
+        log_message,
+        logger=logger,
+        context={"server_name": server_name, "server_url": server_url},
+    )
 
 
 def _default_bedrock_model(config: dict[str, Any]) -> Model:
@@ -183,6 +281,10 @@ def _default_llamacpp_model(config: dict[str, Any]) -> Model:
     )
 
 
+def _fresh_tls_httpx_async_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(verify=create_tls_context())
+
+
 class NIMSModel(OpenAIModel):  # type: ignore[misc]
     """OpenAI-compatible model for NVIDIA NIM endpoints.
 
@@ -190,6 +292,14 @@ class NIMSModel(OpenAIModel):  # type: ignore[misc]
     OpenAI multi-modal content block array format. This subclass patches
     ``format_request`` to strip both before the request is sent.
     """
+
+    def _resolve_client_args(self) -> dict[str, Any]:
+        # OpenAIModel._get_client() calls this fresh on every stream() invocation and
+        # constructs a new AsyncOpenAI(**_resolve_client_args()) each time, closing the
+        # underlying client on exit - so client_args must carry a brand-new async client
+        # on every call, not one built once and reused, or the second request fails with
+        # "client has been closed".
+        return {**self.client_args, "http_client": _fresh_tls_httpx_async_client()}
 
     def format_request(
         self,
@@ -219,18 +329,81 @@ class NIMSModel(OpenAIModel):  # type: ignore[misc]
 
 
 def _default_nims_model(config: dict[str, Any]) -> Model:
-    import httpx
-
     base_url = config["model"].get("nims_base_url") or "https://integrate.api.nvidia.com/v1"
     api_key = config["model"].get("nims_api_key") or "no-key"
     return NIMSModel(
         client_args={
             "base_url": base_url,
             "api_key": api_key,
-            "http_client": httpx.Client(verify=create_tls_context()),
         },
         model_id=config["model"]["model_id"],
     )
+
+
+def _memory_tool(knowledge_base_id: str, region_name: str | None) -> AgentTool:
+    """Build a `memory` tool bound to one knowledge base and region.
+
+    `strands_tools.memory.memory`'s own schema exposes `STRANDS_KNOWLEDGE_BASE_ID` and
+    `region_name` as arguments the model can set, so a model-chosen value overrides the
+    operator's configured knowledge base or region (`memory.py`: `kb_id =
+    STRANDS_KNOWLEDGE_BASE_ID or os.getenv(...)`) - the configured value is only a
+    fallback, not an enforced one. This wrapper's own schema omits both; they are bound
+    here from `StrandsAgentConfig` instead, so the model has no parameter to set them
+    with. Calling the decorated `memory` function directly, as below, invokes the
+    original function (bypassing agent tool-invocation), per
+    `DecoratedFunctionTool.__call__`.
+    """
+    from strands_tools.memory import memory as strands_memory
+
+    @strands_tool(name="memory")
+    def memory_tool(
+        action: str,
+        content: str | None = None,
+        title: str | None = None,
+        document_id: str | None = None,
+        query: str | None = None,
+        max_results: int | None = None,
+        next_token: str | None = None,
+        min_score: float | None = None,
+    ) -> dict[str, Any]:
+        """Manage content in a Bedrock Knowledge Base (store, delete, list, get, or retrieve).
+
+        This tool provides a user-friendly interface for managing knowledge base content
+        with built-in safety measures for mutative operations. For operations that modify
+        data (store, delete), users will be shown a preview and asked for explicit
+        confirmation before changes are made, unless the BYPASS_TOOL_CONSENT environment
+        variable is set to "true".
+
+        Args:
+            action: The action to perform ('store', 'delete', 'list', 'get', or 'retrieve').
+            content: The text content to store in the knowledge base (required for 'store').
+            title: Optional title for the content when storing. Defaults to a timestamp.
+            document_id: The ID of the document to delete or get (required for 'delete' and
+                'get').
+            query: The search query for semantic search (required for 'retrieve').
+            max_results: Maximum number of results for 'list' or 'retrieve' (default: 50,
+                max: 1000).
+            next_token: Token for pagination in 'list' or 'retrieve' (optional).
+            min_score: Minimum relevance score threshold (0.0-1.0) for 'retrieve'. Default
+                is 0.4.
+
+        Returns:
+            A dictionary containing the result of the operation.
+        """
+        return strands_memory(
+            action=action,
+            content=content,
+            title=title,
+            document_id=document_id,
+            query=query,
+            STRANDS_KNOWLEDGE_BASE_ID=knowledge_base_id,
+            max_results=max_results,  # pyright: ignore[reportArgumentType]
+            next_token=next_token,
+            min_score=min_score,  # pyright: ignore[reportArgumentType]
+            region_name=region_name,  # pyright: ignore[reportArgumentType]
+        )
+
+    return memory_tool
 
 
 DEFAULT_SESSION_MANAGER_FACTORIES: dict[str, Any] = {
@@ -244,6 +417,174 @@ DEFAULT_MODEL_PROVIDER_FACTORIES: dict[str, Any] = {
     "llamacpp": _default_llamacpp_model,
     "nims": _default_nims_model,
 }
+
+
+@dataclass(repr=False)
+class AgentBuilder:
+    """Prepared, shareable pieces for building fresh Strands Agent instances.
+
+    Returned by :meth:`StrandsAgentFactory.create_agent_builder`, which does the
+    expensive one-time setup (tool loading, MCP client construction, A2A
+    discovery, model creation) once. :meth:`build` is synchronous and returns a
+    fresh ``Agent`` per call, so a caller invoked once per conversation (such as
+    an A2A per-context ``agent_factory=``) does not repeat that setup.
+
+    Shared across every agent built from this builder: the model client, the
+    ``MCPClient`` objects, and loaded tools. A2A client tools are the exception.
+    Their provider caches every agent card a conversation discovers, including
+    a card for a URL a client asked for, so each built agent gets its own
+    provider. It starts with a copy of the cards discovered for the configured
+    A2A servers, so no conversation repeats that discovery unless startup
+    discovery timed out, in which case each conversation retries it. The MCP clients are constructed
+    here but not connected. Strands connects an MCP client when the first
+    agent using it is constructed, so MCP connection errors surface from
+    :meth:`build`, not from ``create_agent_builder()``. The connection is
+    reference-counted per agent: it stays open while at least one built agent
+    holds the client, and is stopped once the last such agent is garbage
+    collected. A later ``build()`` then reconnects. A caller that wants one
+    long-lived connection must keep at least one built agent alive.
+
+    The repr is disabled because the stored config carries credentials (model
+    API keys, MCP ``Authorization`` headers).
+
+    Per agent, never shared: message history, ``AgentState``, the
+    conversation manager instance, the session manager, and the A2A client
+    tool provider. Each ``build()``
+    call gets its own conversation manager and, when a session type is
+    configured, its own per-session session manager — two agents built from
+    the same builder never see each other's history or state.
+    """
+
+    _factory: "StrandsAgentFactory"
+    _base_config: AgentConfig
+    _config_dict: dict[str, Any]
+    _tools: list[Any]
+    _model: Model
+    _a2a_provider: A2AClientToolProvider | None = None
+    _a2a_httpx_client_args: dict[str, Any] | None = None
+
+    def build(self, session_id: str | None = None) -> Agent:
+        """Build a fresh Strands Agent, synchronously.
+
+        Args:
+            session_id: Session identifier for this conversation. When a
+                session type is configured and session_id is provided, a
+                per-session session manager is created via the factory's
+                existing session-manager registry (honours
+                session_manager_factories, encryption, S3 guard, dangling
+                tool-use mode). A different session_id persists to its own,
+                independent session. When no session type is configured,
+                session_id is ignored and the agent is not persisted, so an
+                untrusted id (such as an A2A context id) never creates
+                session storage. When a session type is configured, the id
+                must be 1-128 characters of letters, digits, ``.``, ``_``, or
+                ``-``, not ending in ``.``, so it is a valid storage path
+                segment on every OS. The id ``__agent_card__``, which
+                strands' ``A2AServer`` uses to build its agent-card agent at
+                startup, never creates a session, so server construction
+                does no session I/O and no client can share that agent's
+                session.
+
+        Returns:
+            A new Agent with its own message history and AgentState.
+
+        Raises:
+            AgentCreationError: If session_id is invalid, or if session
+                manager, MCP connection, or agent construction fails.
+        """
+        session_type = self._config_dict.get("session_type")
+        if session_id == _A2A_AGENT_CARD_CONTEXT_ID:
+            # The SDK's startup agent-card agent never needs persistence.
+            session_id = None
+        if session_id and session_type and not _BUILD_SESSION_ID_PATTERN.fullmatch(session_id):
+            # The id is untrusted, so it is not echoed into the error.
+            raise AgentCreationError(
+                f"Invalid session_id: use 1-{_BUILD_SESSION_ID_MAX_LEN} letters, digits, '.', '_', or '-', "
+                "not ending in '.'",
+                context={"session_id_length": len(session_id)},
+            )
+        return self._build(session_id, session_type)
+
+    def _build(self, session_id: str | None, session_type: str | None) -> Agent:
+        """Build a fresh Strands Agent using an explicit session type."""
+        try:
+            # Create conversation manager with configured window size.
+            # A fresh instance per call: this holds per-conversation mutable
+            # state, so sharing one across agents built from this builder
+            # would leak history between them.
+            conversation_manager = SlidingWindowConversationManager(
+                window_size=self._base_config.conversation_window_size,
+                should_truncate_results=self._base_config.conversation_truncate_results,
+            )
+
+            # Create session manager if session configuration is provided
+            # Delegates to _create_session_manager() which raises AgentCreationError on failure
+            session_manager: SessionManager | None = None
+            if session_id and session_type:
+                session_manager = self._factory._create_session_manager(
+                    session_id=session_id,
+                    session_type=session_type,
+                    storage_dir=self._config_dict.get("session_storage_dir"),
+                    s3_bucket=self._config_dict.get("session_s3_bucket"),
+                    s3_prefix=self._config_dict.get("session_s3_prefix"),
+                    s3_region=self._config_dict.get("session_s3_region"),
+                    dangling_tool_use_mode=self._config_dict.get("session_restore_dangling_tool_use", "sanitize"),
+                )
+
+            # A fresh list per agent, so the shared builder tools are never mutated.
+            tools = [*self._tools, *self._a2a_tools()]
+
+            # TODO: Remove type ignore when Strands Agent package is available for proper typing
+            agent = Agent(
+                model=self._model,  # Uses model instance for Ollama, or model_id string for other models
+                # A2AServer reads its agent card name and description from the agent.
+                name=self._base_config.agent_name,
+                description=self._base_config.agent_description,
+                system_prompt=self._config_dict["system_prompt"],
+                tools=tools,
+                session_manager=session_manager,
+                conversation_manager=conversation_manager,
+                state=AgentState(self._base_config.agent_state_initial_values),
+            )
+
+            # Log from typed config (not config_dict) to avoid CodeQL taint.
+            # Safe because config_overrides only sets session_id today — never model fields.
+            logger.info(
+                "Created Strands Agent instance",
+                extra={
+                    "provider": self._base_config.model.provider,
+                    "model_id": self._base_config.model.model_id,
+                    "tools_count": len(tools),
+                    "agent_type": type(agent).__name__,
+                },
+            )
+
+            return agent
+
+        except Exception as e:
+            if isinstance(e, (AgentCreationError, ExternalServiceError)):
+                raise
+            raise AgentCreationError(
+                f"Failed to create Strands Agent: {e}",
+                context={"error": str(e), "error_type": type(e).__name__},
+            ) from e
+
+    def _a2a_tools(self) -> list[Any]:
+        """Return A2A client tools from a fresh provider, so agents never share discovered cards."""
+        if self._a2a_provider is None:
+            return []
+        provider = A2AClientToolProvider(
+            known_agent_urls=list(self._a2a_provider._known_agent_urls),  # pyright: ignore[reportPrivateUsage]
+            httpx_client_args=dict(self._a2a_httpx_client_args or {}),
+        )
+        # Copy the cards the builder discovered for the configured servers, so a
+        # new conversation does not repeat that discovery. If startup discovery
+        # timed out, the copied flag is False and each conversation retries it.
+        # A test pins these
+        # strands-agents-tools attributes.
+        provider._discovered_agents = dict(self._a2a_provider._discovered_agents)  # pyright: ignore[reportPrivateUsage]
+        provider._initial_discovery_done = self._a2a_provider._initial_discovery_done  # pyright: ignore[reportPrivateUsage]
+        return list(provider.tools)
 
 
 class StrandsAgentFactory(AgentFactory):
@@ -286,6 +627,13 @@ class StrandsAgentFactory(AgentFactory):
     ) -> Agent:
         """Create a configured Strands Agent instance.
 
+        A thin wrapper over :meth:`create_agent_builder` + :meth:`AgentBuilder.build`
+        kept for backward compatibility and for callers that only need one agent.
+        A caller that needs one agent per conversation (such as an A2A per-context
+        ``agent_factory=``) should call :meth:`create_agent_builder` once and then
+        :meth:`AgentBuilder.build` per conversation instead, to avoid repeating the
+        one-time setup (tool loading, MCP clients, A2A discovery) on every call.
+
         Args:
             tools: Optional list of tools to provide to the agent.
             tools=[] means "no tools available"
@@ -297,6 +645,45 @@ class StrandsAgentFactory(AgentFactory):
 
         Raises:
             AgentCreationError: If agent creation or configuration fails
+        """
+        builder = await self.create_agent_builder(tools, config_overrides)
+        session_id = builder._config_dict.get("session_id")
+        # create_agent() keeps its historical default of a file session when a
+        # session_id is given without a session type. build() does not, because
+        # its session_id may come from an untrusted caller.
+        session_type = builder._config_dict.get("session_type") or (session_id and "file")
+        return builder._build(session_id, session_type)
+
+    async def create_agent_builder(
+        self,
+        tools: Sequence[ToolFunction] | None = None,
+        config_overrides: dict[str, Any] | None = None,
+    ) -> AgentBuilder:
+        """Run the one-time agent setup once and return a builder for per-conversation agents.
+
+        Does everything :meth:`create_agent` used to do except construct the
+        session manager and the ``Agent`` itself: config load and override
+        merge, tool loading from modules/files, MCP client collection, A2A
+        client tool setup and eager discovery, memory tool injection,
+        telemetry init, and model creation. Those pieces are shared by every
+        agent built from the returned :class:`AgentBuilder`; see its
+        docstring for exactly what is shared vs. per-agent.
+
+        Args:
+            tools: Optional list of tools to provide to built agents.
+            tools=[] means "no tools available"
+            tools=None means "all tools available"
+            config_overrides: Optional configuration overrides
+
+        Returns:
+            An AgentBuilder ready to build one Agent per conversation via
+            AgentBuilder.build(session_id).
+
+        Raises:
+            AgentCreationError: If setup fails (tool loading, MCP client
+                configuration, telemetry initialization, or configuration
+                resolution). MCP connection errors surface later, from
+                AgentBuilder.build().
         """
         try:
             # Load base configuration
@@ -321,6 +708,9 @@ class StrandsAgentFactory(AgentFactory):
                 tools.extend(await self._load_tools_from_modules(base_config.tools_modules, tools_dir))
             if base_config.tools_files:
                 tools.extend(await self._load_tools_from_files(base_config.tools_files, tools_dir))
+            tools = _drop_repeated_tool_spec_modules(tools)
+            tools = _drop_tool_spec_modules_strands_cannot_load(tools)
+            _warn_about_tool_name_overwrites(tools)
 
             # Add MCP tools if MCP servers are configured
             if base_config.mcp_servers:
@@ -336,18 +726,26 @@ class StrandsAgentFactory(AgentFactory):
                 logger.debug("Added MCP tools", extra={"mcp_clients_count": len(mcp_clients)})
 
             # Add A2A client tools if configured
+            a2a_provider: A2AClientToolProvider | None = None
+            a2a_httpx_client_args: dict[str, Any] | None = None
             if base_config.a2a_servers:
                 agent_urls = [config["url"] for config in base_config.a2a_servers]
 
-                logger.info("A2A agents detected, adding client tools", extra={"agents_count": len(agent_urls)})
+                logger.info(
+                    "A2A agents detected, adding client tools",
+                    extra={
+                        "agents_count": len(agent_urls),
+                        "destination_hosts": [_destination_host(url) for url in agent_urls],
+                    },
+                )
 
+                a2a_httpx_client_args = {"verify": create_tls_context()}
                 a2a_provider = A2AClientToolProvider(
                     known_agent_urls=agent_urls,
-                    httpx_client_args={"verify": create_tls_context()},
+                    httpx_client_args=dict(a2a_httpx_client_args),
                 )
-                # A2A tools are DecoratedFunctionTool objects that are directly callable
-                tools.extend(a2a_provider.tools)  # pyright: ignore[reportArgumentType]
-
+                # build() gives each agent its own provider seeded from this one,
+                # so the A2A tools are not added to the shared tools list.
                 logger.debug("Added A2A client tools", extra={"a2a_tools_count": len(a2a_provider.tools)})
 
                 # Eagerly discover A2A agent cards at startup so LLM knows capabilities immediately
@@ -366,11 +764,12 @@ class StrandsAgentFactory(AgentFactory):
             # Add memory tool if memory is enabled and knowledge_base_id is configured
             if base_config.enable_memory and base_config.knowledge_base_id:
                 try:
-                    from strands_tools.memory import memory
-
-                    # Set env var for the memory tool to read (it checks STRANDS_KNOWLEDGE_BASE_ID)
-                    os.environ["STRANDS_KNOWLEDGE_BASE_ID"] = base_config.knowledge_base_id
-                    tools.append(memory)
+                    # `region_name` is the Bedrock model's region (AgentModelConfig.region_name),
+                    # not necessarily the knowledge base's - there's no separate KB-region field.
+                    # A fixed None, like the pre-fix code, lets strands_tools.memory resolve its own
+                    # region (the AWS_REGION env var, defaulting to "us-west-2" if unset), instead
+                    # of forcing a cross-region model/KB setup onto the model's region.
+                    tools.append(_memory_tool(base_config.knowledge_base_id, None))
 
                     logger.info(
                         "Memory tool injected",
@@ -388,7 +787,13 @@ class StrandsAgentFactory(AgentFactory):
 
                     # Use AWS Strands built-in OTLP exporter with environment variables
                     StrandsTelemetry().setup_otlp_exporter()
-                    logger.info("AWS Strands telemetry initialized successfully")
+                    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+                    logger.info(
+                        "AWS Strands telemetry initialized successfully",
+                        extra={
+                            "destination_host": _destination_host(otlp_endpoint) if otlp_endpoint else "unconfigured"
+                        },
+                    )
                 except Exception as e:
                     logger.exception("Telemetry initialization failed: %s", e)
                     raise AgentCreationError(
@@ -402,52 +807,17 @@ class StrandsAgentFactory(AgentFactory):
                         },
                     ) from e
 
-            # Create conversation manager with configured window size
-            conversation_manager = SlidingWindowConversationManager(
-                window_size=base_config.conversation_window_size,
-                should_truncate_results=base_config.conversation_truncate_results,
-            )
-
-            # Create session manager if session configuration is provided
-            # Delegates to _create_session_manager() which raises AgentCreationError on failure
-            session_manager: SessionManager | None = None
-            session_id = config_dict.get("session_id")
-            session_type = config_dict.get("session_type") or (session_id and "file")
-            if session_id and session_type:
-                session_manager = self._create_session_manager(
-                    session_id=session_id,
-                    session_type=session_type,
-                    storage_dir=config_dict.get("session_storage_dir"),
-                    s3_bucket=config_dict.get("session_s3_bucket"),
-                    s3_prefix=config_dict.get("session_s3_prefix"),
-                    s3_region=config_dict.get("session_s3_region"),
-                )
-
             strands_model = self.create_model(config_dict)
 
-            # TODO: Remove type ignore when Strands Agent package is available for proper typing
-            agent = Agent(
-                model=strands_model,  # Uses model instance for Ollama, or model_id string for other models
-                system_prompt=config_dict["system_prompt"],
-                tools=tools,  # type: ignore[arg-type]
-                session_manager=session_manager,
-                conversation_manager=conversation_manager,
-                state=AgentState(base_config.agent_state_initial_values),
+            return AgentBuilder(
+                _factory=self,
+                _base_config=base_config,
+                _config_dict=config_dict,
+                _tools=tools,
+                _model=strands_model,
+                _a2a_provider=a2a_provider,
+                _a2a_httpx_client_args=a2a_httpx_client_args,
             )
-
-            # Log from typed config (not config_dict) to avoid CodeQL taint.
-            # Safe because config_overrides only sets session_id today — never model fields.
-            logger.info(
-                "Created Strands Agent instance",
-                extra={
-                    "provider": base_config.model.provider,
-                    "model_id": base_config.model.model_id,
-                    "tools_count": len(tools),
-                    "agent_type": type(agent).__name__,
-                },
-            )
-
-            return agent
 
         except Exception as e:
             if isinstance(e, (AgentCreationError, ExternalServiceError)):
@@ -470,8 +840,12 @@ class StrandsAgentFactory(AgentFactory):
             List of MCP clients
 
         Raises:
+            InvalidConfigurationError: If a server entry would send a credential over plaintext http
             ExternalServiceError: If MCP server connection fails
         """
+        # The plaintext-credential guard, enforced where MCP connections are opened, so
+        # it also covers servers that never passed through StrandsAgentConfig's validators.
+        self._get_base_config().check_mcp_server_credentials(mcp_servers)
         mcp_clients: list[Any] = []
         for server_config in mcp_servers:
             server_url = server_config["url"]  # raise if missing
@@ -486,10 +860,15 @@ class StrandsAgentFactory(AgentFactory):
             # After validation, server_url is guaranteed to be a string
             validated_server_url: str = server_url
 
+            try:
+                interpolated_headers = _interpolate_env_vars(server_config.get("headers", None))
+            except ExternalServiceError:
+                _raise_mcp_error("MCP header interpolation failed", server_name=server_name, server_url=server_url)
+
             # Prepare streamablehttp_client arguments per MCP configuration spec:
             server_kwargs: dict[str, Any] = {
                 "url": validated_server_url,
-                "headers": server_config.get("headers", None),
+                "headers": interpolated_headers,
                 "httpx_client_factory": create_mcp_http_client,
             }
             # The below arguments are optional but have hard-coded defaults:
@@ -501,18 +880,20 @@ class StrandsAgentFactory(AgentFactory):
                 server_kwargs["terminate_on_close"] = terminate_on_close
 
             try:
-                mcp_client = MCPClient(lambda kwargs=server_kwargs: streamablehttp_client(**kwargs))
+                # Shared by every agent built from the builder, so it reconnects in place.
+                mcp_client = ReconnectingMCPClient(
+                    lambda kwargs=server_kwargs: streamablehttp_client(**kwargs),
+                    server_name=server_name,
+                    destination_host=_destination_host(validated_server_url),
+                )
                 mcp_clients.append(mcp_client)
+                logger.info(
+                    "MCP client configured",
+                    extra={"server_name": server_name, "destination_host": _destination_host(validated_server_url)},
+                )
 
-            except Exception as e:
-                raise ExternalServiceError(
-                    f"Failed to create MCP client for server '{server_name}': {e}",
-                    context={
-                        "server_name": server_name,
-                        "server_url": server_url,
-                        "error": str(e),
-                    },
-                ) from e
+            except Exception:
+                _raise_mcp_error("Failed to create MCP client", server_name=server_name, server_url=server_url)
 
         return mcp_clients
 
@@ -529,8 +910,11 @@ class StrandsAgentFactory(AgentFactory):
             List of MCP tools discovered from all servers
 
         Raises:
+            InvalidConfigurationError: If a server entry would send a credential over plaintext http
             ExternalServiceError: If MCP server connection fails
         """
+        # Same connection-time plaintext-credential guard as _collect_mcp_clients.
+        self._get_base_config().check_mcp_server_credentials(mcp_servers)
         mcp_tools: list[Any] = []
         for server_config in mcp_servers:
             server_url = server_config["url"]  # raise if missing
@@ -545,10 +929,15 @@ class StrandsAgentFactory(AgentFactory):
             # After validation, server_url is guaranteed to be a string
             validated_server_url: str = server_url
 
+            try:
+                interpolated_headers = _interpolate_env_vars(server_config.get("headers", None))
+            except ExternalServiceError:
+                _raise_mcp_error("MCP header interpolation failed", server_name=server_name, server_url=server_url)
+
             # Prepare streamablehttp_client arguments per MCP configuration spec:
             server_kwargs: dict[str, Any] = {
                 "url": validated_server_url,
-                "headers": server_config.get("headers", None),
+                "headers": interpolated_headers,
                 "httpx_client_factory": create_mcp_http_client,
             }
             # The below arguments are optional but have hard-coded defaults:
@@ -585,24 +974,17 @@ class StrandsAgentFactory(AgentFactory):
 
                 mcp_tools.extend(tools_from_server)
 
-                logger.debug(
+                logger.info(
                     "Connected to MCP server and discovered tools",
                     extra={
                         "server_name": server_name,
-                        "server_url": server_url,
+                        "destination_host": _destination_host(validated_server_url),
                         "tools_count": len(tools_from_server),
                     },
                 )
 
-            except Exception as e:
-                raise ExternalServiceError(
-                    f"Failed to connect to MCP server '{server_name}': {e}",
-                    context={
-                        "server_name": server_name,
-                        "server_url": server_url,
-                        "error": str(e),
-                    },
-                ) from e
+            except Exception:
+                _raise_mcp_error("Failed to connect to MCP server", server_name=server_name, server_url=server_url)
 
         return mcp_tools
 
@@ -646,7 +1028,10 @@ class StrandsAgentFactory(AgentFactory):
 
                 logger.info(
                     "A2A agents detected, adding client tools alongside MCP tools",
-                    extra={"agents_count": len(agent_urls)},
+                    extra={
+                        "agents_count": len(agent_urls),
+                        "destination_hosts": [_destination_host(url) for url in agent_urls],
+                    },
                 )
 
                 a2a_provider = A2AClientToolProvider(
@@ -918,6 +1303,7 @@ class StrandsAgentFactory(AgentFactory):
             "session_s3_bucket": config.session_s3_bucket,
             "session_s3_prefix": config.session_s3_prefix,
             "session_s3_region": getattr(config, "session_s3_region", None),
+            "session_restore_dangling_tool_use": config.session_restore_dangling_tool_use,
         }
 
     def _create_session_repository(self, config: AgentConfig) -> SessionManager | None:
@@ -948,6 +1334,7 @@ class StrandsAgentFactory(AgentFactory):
             s3_bucket=config.session_s3_bucket,
             s3_prefix=config.session_s3_prefix,
             s3_region=getattr(config, "session_s3_region", None),
+            dangling_tool_use_mode=config.session_restore_dangling_tool_use,
         )
 
     def _merge_config_overrides(self, base_config: AgentConfig, overrides: dict[str, Any]) -> dict[str, Any]:
@@ -975,6 +1362,7 @@ class StrandsAgentFactory(AgentFactory):
         s3_bucket: str | None = None,
         s3_prefix: str | None = None,
         s3_region: str | None = None,
+        dangling_tool_use_mode: DanglingToolUseMode = "sanitize",
     ) -> SessionManager:
         """Create a session manager instance based on the specified type.
 
@@ -989,6 +1377,8 @@ class StrandsAgentFactory(AgentFactory):
             s3_bucket: S3 bucket name (required for "s3" type)
             s3_prefix: S3 key prefix (optional for "s3" type)
             s3_region: AWS region for S3 (optional for "s3" type)
+            dangling_tool_use_mode: Restore-time remediation mode for a session whose
+                restored history ends in an unresolved `tool_use` block
 
         Returns:
             Configured SessionManager instance
@@ -1018,6 +1408,7 @@ class StrandsAgentFactory(AgentFactory):
                 s3_bucket=s3_bucket,
                 s3_prefix=s3_prefix,
                 s3_region=s3_region,
+                dangling_tool_use_mode=dangling_tool_use_mode,
             )
 
         except AgentCreationError:
@@ -1059,6 +1450,7 @@ class StrandsAgentFactory(AgentFactory):
             s3_bucket=config_dict.get("session_s3_bucket"),
             s3_prefix=config_dict.get("session_s3_prefix"),
             s3_region=config_dict.get("session_s3_region"),
+            dangling_tool_use_mode=config_dict.get("session_restore_dangling_tool_use", "sanitize"),
         )
         try:
             # delete_session is on FileSessionManager/S3SessionManager, not the abstract base
@@ -1122,6 +1514,7 @@ class StrandsAgentFactory(AgentFactory):
             s3_bucket=config_dict.get("session_s3_bucket"),
             s3_prefix=config_dict.get("session_s3_prefix"),
             s3_region=config_dict.get("session_s3_region"),
+            dangling_tool_use_mode=config_dict.get("session_restore_dangling_tool_use", "sanitize"),
         )
 
     async def load_configured_tools(
@@ -1297,9 +1690,13 @@ class StrandsAgentFactory(AgentFactory):
         tools = []
         for tool_module in tools_modules:
             try:
+                # load_tool_from_module validates the module (tools_dir confinement, source analysis,
+                # tool shape) before returning it; a TOOL_SPEC module comes back as the module itself.
                 loaded = await load_tool_from_module(tool_module, tools_dir=tools_dir)
-                if hasattr(loaded, "TOOL_SPEC"):
-                    tools.extend(getattr(loaded, "TOOL_SPEC", {}).get("tools", []))
+                spec = getattr(loaded, "TOOL_SPEC", None)
+                tools_list = spec.get("tools") if isinstance(spec, dict) else None
+                if isinstance(tools_list, (list, tuple)):  # a TOOL_SPEC's own "tools", loaded as before 3.2.2
+                    tools.extend(tools_list)
                 else:
                     tools.append(loaded)
             except Exception as e:
@@ -1334,3 +1731,130 @@ class StrandsAgentFactory(AgentFactory):
                     },
                 )
         return tools
+
+
+def _drop_repeated_tool_spec_modules(tools: list[Any]) -> list[Any]:
+    """Keep the first TOOL_SPEC module loaded from each file, and warn about any later copy.
+
+    Before 3.2.2, a TOOL_SPEC module listed in ``tools_modules`` was dropped, so a tool listed in
+    ``tools_files`` as well loaded once. It now loads from both, so a second copy of the same file
+    is skipped to keep giving the agent the tool once. Files are compared by resolved path, so two
+    different files are both kept and passed to Strands, which names each after its file. Two
+    different files with the same file name get the same name there, and Strands keeps the later one,
+    as before 3.2.2.
+    """
+    seen: set[str] = set()
+    kept: list[Any] = []
+    for tool in tools:
+        is_tool_spec = isinstance(tool, types.ModuleType) and hasattr(tool, "TOOL_SPEC")
+        source = getattr(tool, "__file__", None) if is_tool_spec else None
+        if isinstance(source, str):
+            path = os.path.normcase(str(Path(source).resolve()))
+            if path in seen:
+                spec = getattr(tool, "TOOL_SPEC", None)
+                logger.warning(
+                    "Skipping a second copy of TOOL_SPEC tool %s from %s (the file is listed more than once "
+                    "in tools_modules and tools_files)",
+                    spec.get("name") if isinstance(spec, dict) else tool.__name__,
+                    path,
+                )
+                continue
+            seen.add(path)
+        kept.append(tool)
+    return kept
+
+
+def _drop_tool_spec_modules_strands_cannot_load(tools: list[Any]) -> list[Any]:
+    """Skip, with an error, a TOOL_SPEC module that Strands would reject or misname.
+
+    Strands 1.57.0 loads a module tool under its module's file name (strands.tools.registry
+    process_tools) and runs it through strands.tools.loader.load_tools_from_module. The loader here
+    checks for a function named after TOOL_SPEC["name"] instead, so two problems pass it:
+
+    - Strands rejects the module (for example, no function named after the file, or an empty
+      TOOL_SPEC), and that fails Agent() for every tool.
+    - Strands loads it, but registers it under the file name while telling the model it is called
+      TOOL_SPEC["name"]. When the names differ, every call the model makes is "tool not found".
+
+    Each module is run through Strands' own loader, so its rules aren't copied here, and kept only
+    if every tool it yields is registered under the name its spec gives. Skipping just that module
+    keeps the agent starting, as it did before 3.2.2, when such a module was dropped.
+    """
+    kept: list[Any] = []
+    for tool in tools:
+        # Strands only loads a module with a file as a module tool; everything else passes through.
+        if isinstance(tool, types.ModuleType) and hasattr(tool, "TOOL_SPEC") and hasattr(tool, "__file__"):
+            strands_name = tool.__name__.split(".")[-1]
+            try:
+                strands_tools = strands_load_tools_from_module(tool, strands_name)
+            except Exception as e:
+                logger.error(
+                    "Skipping tool module %s from %s: Strands cannot load it (%s)",
+                    strands_name,
+                    tool.__file__,
+                    e,
+                )
+                continue
+            misnamed = [t for t in strands_tools if t.tool_name != t.tool_spec.get("name")]
+            if misnamed:
+                logger.error(
+                    "Skipping TOOL_SPEC tool %s from %s: Strands names it %r after its file, so the file "
+                    'name, TOOL_SPEC["name"] and its function must all match. Rename the file to %s.py, '
+                    'or set TOOL_SPEC["name"] and the function name to %r',
+                    misnamed[0].tool_spec.get("name"),
+                    tool.__file__,
+                    strands_name,
+                    misnamed[0].tool_spec.get("name"),
+                    strands_name,
+                )
+                continue
+        kept.append(tool)
+    return kept
+
+
+def _strands_tool_names(tool: Any) -> list[tuple[str, str]]:
+    """The names Strands will register for ``tool``, each with where it came from.
+
+    A module with a file is named the way Strands names it (strands.tools.loader); an AgentTool,
+    which covers @tool functions, under its tool_name; a list or tuple, item by item. Anything else
+    (path strings, dicts) is left to Strands and not reported.
+    """
+    if isinstance(tool, list | tuple):
+        return [named for item in tool for named in _strands_tool_names(item)]
+    if isinstance(tool, types.ModuleType) and hasattr(tool, "__file__"):
+        try:
+            loaded = strands_load_tools_from_module(tool, tool.__name__.split(".")[-1])
+        except Exception:
+            return []  # not a tool module Strands loads; nothing to name
+        path = os.path.normcase(str(Path(str(tool.__file__)).resolve()))
+        return [(t.tool_name, path) for t in loaded]
+    if isinstance(tool, AgentTool):
+        return [(tool.tool_name, f"{getattr(tool, '__module__', type(tool).__name__)}.{tool.tool_name}")]
+    return []
+
+
+def _warn_about_tool_name_overwrites(tools: list[Any]) -> None:
+    """Warn when two tools get the same name, which Strands resolves by keeping the later one.
+
+    Strands 1.57.0 lets a later tool replace an earlier one with the same name (module tools and
+    @tool functions support hot reload, strands.tools.registry.register_tool), with only a debug
+    log. The factory keeps that behavior, so nothing that loads changes, and logs which copy is lost.
+    """
+    sources_by_name: dict[str, list[str]] = {}
+    for tool in tools:
+        for name, source in _strands_tool_names(tool):
+            sources = sources_by_name.setdefault(name, [])
+            # The same tool reached twice (for example from the registry and from config) is one tool,
+            # but it now comes later, and Strands keeps the last one: move it to the end.
+            if source in sources:
+                sources.remove(source)
+            sources.append(source)
+    for name, sources in sources_by_name.items():
+        if len(sources) > 1:
+            logger.warning(
+                "Tool name %r comes from %s. Strands keeps only the last one (%s); rename the others "
+                "so each tool has its own name",
+                name,
+                ", ".join(sources),
+                sources[-1],
+            )

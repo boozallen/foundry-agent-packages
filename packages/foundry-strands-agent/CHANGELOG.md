@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 3.2.4 - 2026-11-18
+
+### Features
+
+- guard session restore against dangling tool_use
+
+### Fixes
+
+- raise chunk_index ceiling to match max document size
+- remove stale alpha status from docs and package metadata
+- implement ${VAR} env-var interpolation for MCP server headers
+- mask session identifiers and query content in agent logs
+- drop dedup checks on tls warning
+- list encrypted file and S3 chat sessions
+- UTF-8 dict byte caps and public validate_bounded_dict
+- reconnect shared MCP clients in place after a dropped connection
+- make add_consumer/remove_consumer non-blocking during MCP reconnect
+- never strand a queued MCP consumer change or mask a reconnect error
+- recover a shared MCP client after a failed reconnect
+- 3.2.2, skip a TOOL_SPEC tool Strands can't load or would misname, and warn on same-named tools
+- 3.2.4, bind the memory tool's knowledge base id and region
+
+### Maintenance
+
+- Security and maintenance updates (9)
+- document tls warning volume change
+- Add per-context agent builder for A2A agent_factory=
+- Packaging and dependency updates
+
 ## [2.6.0] - 2026-09-08
 
 ### Changed

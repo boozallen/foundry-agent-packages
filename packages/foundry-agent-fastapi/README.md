@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Reusable FastAPI middleware, health-check endpoint, API models, and
-mappers for agent services built on `foundry-agent-core`. Provides CORS,
+mappers for agent services built on [`foundry-agent-core`](../foundry-agent-core/README.md). Provides CORS,
 error handling, and request logging with correlation-ID tracking; maps
 HTTP DTOs to and from domain types.
 
@@ -11,7 +11,7 @@ HTTP DTOs to and from domain types.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+See [Adopting these packages](../../docs/foundry/releases/adopting.md)
 for the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -48,14 +48,14 @@ handler.
 | Surface | Highlights |
 |---------|------------|
 | Middleware | `add_cors_middleware`, `add_error_handling_middleware`, `add_request_logging_middleware` |
-| Domain → HTTP error mapping | `ValidationError` → 400, `ResourceNotFoundError` → 404, `ExternalServiceError` → 502, `DomainError` → 500 |
+| Domain → HTTP error mapping | `ValidationError` → 400, `ExternalServiceError` → 502, all other `DomainError` → 500 |
 | API models | `QueryAPIRequest`, `QueryAPIResponse`, `ErrorResponse` |
 | Mappers | `api_request_to_domain`, `domain_response_to_api`, `domain_error_to_api_response` |
 | Health router | `health_router` mounts `GET /api/v1/health` |
 | Correlation IDs | `generate_correlation_id()` → `req_<8hex>` |
 
-CORS is configured via env vars: `STRANDS_CORS_ORIGINS`, `STRANDS_CORS_METHODS`,
-`STRANDS_CORS_HEADERS`.
+CORS is configured via env vars: `STRANDS_CORS_ORIGINS`, `STRANDS_CORS_ALLOW_METHODS`,
+`STRANDS_CORS_ALLOW_HEADERS`.
 
 ## Security
 

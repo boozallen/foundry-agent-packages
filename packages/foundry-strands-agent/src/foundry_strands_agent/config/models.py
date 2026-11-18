@@ -8,15 +8,38 @@ which supports YAML files with environment variable overrides.
 """
 
 import json
+import logging
 import os
+import re
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self, cast
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from foundry_agent_config import load_config
-from foundry_agent_core import _MAX_QUERY_LEN, InvalidConfigurationError
+from foundry_agent_core import _MAX_QUERY_LEN, InvalidConfigurationError, validate_bounded_dict
+
+logger = logging.getLogger(__name__)
+
+# Common credential-bearing HTTP header names (lower-cased for case-insensitive
+# matching). This is a heuristic safety net, not an exhaustive credential
+# classifier - it covers the header the finding names (Authorization), the other
+# standard credential headers (Proxy-Authorization, Cookie), and the most common
+# API-key conventions. Extending this set only makes the guard stricter, so it is
+# safe to add names later without a breaking change.
+_CREDENTIAL_HEADER_NAMES = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "x-api-key",
+        "x-api-token",
+        "api-key",
+        "x-auth-token",
+    }
+)
 
 _MAX_NAME_LEN = 128
 _MAX_DESCRIPTION_LEN = 1024
@@ -45,6 +68,118 @@ _MAX_AGENT_STATE_KEYS = 128
 _MAX_AGENT_STATE_KEY_LEN = 128
 _MAX_AGENT_STATE_BYTES = 1_048_576
 
+# RFC 3986 scheme grammar (section 3.1), anchored at the start: a scheme is
+# exactly one letter followed by letters/digits/"+"/"-"/".", then ":". Used
+# instead of urlsplit().scheme for the credential guard below because
+# urlsplit() is lenient about what precedes the "://" - a space, tab, or
+# control character embedded before the colon makes it silently return an
+# empty (or, for some characters, a still-"http") scheme rather than raising,
+# which would let a crafted url bypass a same-string scheme comparison. This
+# regex either matches a real, well-formed scheme or doesn't match at all -
+# no separate control-character blocklist to maintain.
+_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):")
+
+# Matches the "/", "?" or "#" that ends a URL's authority component (no match
+# means it runs to end of string). Used by `_split_url_authority` to find the
+# userinfo/host boundary without depending on a well-formed, `_SCHEME_RE`-matching
+# scheme or a literal "://" being present - see `_redact_url`'s docstring.
+_AUTHORITY_END_RE = re.compile(r"[/?#]")
+
+
+def _split_url_authority(url: str) -> tuple[str, str, str] | None:
+    """Split `url` into (scheme-and-slashes prefix, authority, remainder), or `None` if unparseable.
+
+    Finds the first ":" (the scheme delimiter, whether or not `_SCHEME_RE` would consider the
+    scheme well-formed), skips an optional "//", and takes everything up to the next "/", "?",
+    "#" (or end of string) as the authority. This does NOT require a literal "://" or a
+    well-formed scheme - see `_redact_url`'s docstring for why neither is required.
+    Used by `_url_has_userinfo` to detect a credential in the authority's userinfo, and by
+    `_redact_url` only for the scheme prefix (its redaction is deliberately broader).
+    """
+    colon = url.find(":")
+    if colon == -1:
+        return None
+    rest = url[colon + 1 :]
+    has_slashes = rest.startswith("//")
+    authority_and_beyond = rest[2:] if has_slashes else rest
+    sep_match = _AUTHORITY_END_RE.search(authority_and_beyond)
+    end = sep_match.start() if sep_match else len(authority_and_beyond)
+    authority = authority_and_beyond[:end]
+    remainder = authority_and_beyond[end:]
+    prefix = url[: colon + 1] + ("//" if has_slashes else "")
+    return prefix, authority, remainder
+
+
+def _url_has_userinfo(url: str) -> bool:
+    """Whether `url` embeds a credential in its authority's userinfo (`user:pass@host`).
+
+    Checked independent of any header: httpx derives HTTP Basic-Auth from a url's userinfo by
+    default whenever no explicit `auth=` is set (`httpx.Client._build_request_auth`), so a
+    plaintext url carrying its own embedded credential sends that credential unencrypted
+    exactly like one paired with an `Authorization` header - even when the entry has no
+    `headers` key at all.
+    """
+    split = _split_url_authority(url)
+    return split is not None and "@" in split[1]
+
+
+def _redact_url(url: str) -> str:
+    r"""Redact a URL's userinfo, query and fragment, keeping scheme, host and path.
+
+    A credential embedded in a URL (`http://user:token@host/path`, or a query parameter such  # trufflehog:ignore
+    as `?token=...`) is exactly as sensitive as one in a header and must never appear
+    verbatim in output this guard produces. The query and fragment are replaced wholesale
+    (their contents can't be classified), and the scheme, host and path are kept so the
+    message still identifies the endpoint. For the userinfo, this does
+    NOT use a regex anchored on a literal "user:pass@" or "://...@" shape, and does NOT
+    require the url to have a well-formed, `_SCHEME_RE`-matching scheme - each of those
+    approaches leaks a real credential in a concrete shape:
+
+    - `://[^/@]*@` (stops at the FIRST "@") under-redacts when the userinfo itself contains a
+      literal "@" (e.g. a password like `p@ssw0rd`) - httpx (following WHATWG URL parsing)
+      takes the LAST "@" as the host boundary, not the first.
+    - Requiring a literal "://" misses the RFC-3986-valid `scheme:opaque` form with no
+      authority marker at all (e.g. a dropped-slash typo, `"http:user:pass@host/path"`) -
+      the credential passed through completely unredacted.
+    - Anchoring on `_SCHEME_RE` matching first misses malformed-scheme urls (which
+      `_validate_server_credentials` rejects unconditionally for that exact reason) - a
+      malformed scheme must not also get a pass on credential redaction.
+    - Stopping at the authority's end (the first "/", "?" or "#") misses an unencoded "/", "?"
+      or "#" inside the password itself (`http://user:SEC/RET@host/`): the "@" is never seen.
+
+    Instead, redaction is deliberately broader than `_url_has_userinfo`'s detection: everything
+    after the scheme prefix up to the LAST "@" anywhere in the url is redacted (the host
+    boundary httpx/WHATWG parsing uses), then the query and fragment. If a "?" or "#" comes
+    before that "@", it can't be told whether the "?" sits in the password or the "@" sits in
+    the query, so everything after the scheme prefix is redacted. The prefix is kept only when
+    it is followed by "//" or is `http:`/`https:`, since in `user:pass@host` the text before
+    the first ":" is a username, not a scheme. Over-redacting a url with a literal "@" in its
+    path costs only readability; under-redacting would leak a credential.
+    """
+    at = url.rfind("@")
+    if at == -1:
+        return _redact_query_and_fragment(url)
+    split = _split_url_authority(url)
+    prefix = split[0] if split is not None and len(split[0]) <= at else ""
+    if not prefix.endswith("//") and prefix[:-1].lower() not in ("http", "https"):
+        prefix = ""
+    query_start = _query_or_fragment_start(url)
+    if query_start != -1 and query_start < at:
+        return f"{prefix}<redacted>"
+    return _redact_query_and_fragment(f"{prefix}<redacted>@{url[at + 1 :]}")
+
+
+def _query_or_fragment_start(url: str) -> int:
+    """Index of the first "?" or "#" in `url`, or -1 if it has neither."""
+    return min((i for i in (url.find("?"), url.find("#")) if i != -1), default=-1)
+
+
+def _redact_query_and_fragment(url: str) -> str:
+    """Replace everything after the first "?" or "#" with `<redacted>` (its contents can't be classified)."""
+    cut = _query_or_fragment_start(url)
+    return url if cut == -1 else f"{url[: cut + 1]}<redacted>"
+
+
 _BoundedName = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_NAME_LEN, strip_whitespace=True)]
 _BoundedDescription = Annotated[
     str, StringConstraints(min_length=1, max_length=_MAX_DESCRIPTION_LEN, strip_whitespace=True)
@@ -54,15 +189,178 @@ _BoundedUrl = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_URL
 _BoundedOptionalUrl = _BoundedUrl | None
 
 
+def _is_credential_header(key: object) -> bool:
+    """Whether a header key names a credential-bearing header (case- and whitespace-insensitive).
+
+    httpx also accepts `bytes` header names, so those are decoded rather than passed through
+    `str()`, which would render `b'Authorization'` and never match.
+    """
+    name = key.decode("latin-1") if isinstance(key, bytes) else str(key)
+    return name.strip().lower() in _CREDENTIAL_HEADER_NAMES
+
+
+def _redact_server_for_error(server: dict[str, Any]) -> dict[str, Any]:
+    """Build a safe-to-log/raise representation of a server entry.
+
+    `InvalidConfigurationError` renders its `config_value` argument straight into the
+    exception's `str()` (`f"... (got: {config_value!r})"`), and that message can propagate
+    into logs or error responses. The entire point of this module's credential guard is to
+    stop a credential from reaching such a sink, so the guard must never hand the raw
+    server dict - headers and all - to the exception it raises.
+
+    This follows the same principle as `foundry_agent_core.masking.mask_session_id`/
+    `redact_session_ids` (never let the raw sensitive value reach a log or exception), but
+    uses a fixed `<redacted>` marker rather than that module's per-value hash token, since
+    nothing needs to correlate one credential occurrence with another. A credential can sit
+    in any header or any extra field, not only the ones `_CREDENTIAL_HEADER_NAMES` knows, so
+    only what identifies the entry is kept: the url via `_redact_url` (userinfo, query and
+    fragment redacted), a string `name`, the header names, and `None` values. Every header
+    value, a non-mapping `headers` value, and every other field's value becomes `<redacted>`.
+    """
+    redacted: dict[str, Any] = {}
+    for key, value in server.items():
+        if key == "url" and isinstance(value, str):
+            redacted[key] = _redact_url(value)
+        elif key == "headers" and isinstance(value, Mapping):
+            redacted[key] = dict.fromkeys(cast("Mapping[Any, Any]", value), "<redacted>")
+        elif (key == "name" and isinstance(value, str)) or value is None:
+            redacted[key] = value
+        else:
+            redacted[key] = "<redacted>"
+    return redacted
+
+
+def _validate_server_credentials(
+    servers: list[dict[str, Any]], field_name: str, *, allow_insecure: bool
+) -> list[dict[str, Any]]:
+    r"""Reject (or warn about) MCP/A2A server entries that send credentials over insecure HTTP.
+
+    An entry is "credentialed" if either its `headers` carry a credential-bearing header
+    (`Authorization`, `X-Api-Key`, etc., matched case- and whitespace-insensitively) or its
+    `url` embeds a credential in its own userinfo (`http://user:token@host/path`) - httpx  # trufflehog:ignore
+    derives HTTP Basic-Auth from url userinfo by default even with no `headers` at all, so
+    that case is exactly as unsafe and is checked independently of headers, not only when a
+    header also happens to be present (see `_url_has_userinfo`).
+
+    A non-credentialed entry is always allowed regardless of scheme - this guard is scoped to
+    the specific unsafe combination the finding describes, not plaintext in general. A
+    credentialed entry's scheme falls into one of three buckets:
+
+    - Well-formed `https` - always safe, always allowed.
+    - Well-formed `http` (exactly) - treated as a deployer's deliberate (if risky) choice: by
+      default raises `InvalidConfigurationError`, or when `allow_insecure` is True (an
+      explicit, deployer-controlled opt-in), downgrades to a logged warning so the entry
+      still loads.
+    - Anything else - unparseable, missing/non-string, or some other scheme entirely - raises
+      unconditionally, never downgradable via `allow_insecure`. This doesn't look like a
+      deployer's informed choice of plaintext http; it looks like malformed or
+      adversarially-crafted input, and `allow_insecure` exists for the former, not the latter.
+
+    A non-empty `headers` value that isn't a mapping (e.g. a list of `[name, value]` pairs)
+    also raises unconditionally, whatever the scheme: its header names can't be checked, so
+    the entry can't be proven non-credentialed.
+
+    The scheme is checked via `_SCHEME_RE`, an RFC 3986-anchored regex, not
+    `urlsplit(url).scheme`: `urlsplit` is lenient about what precedes the `://` - a NUL byte
+    or a literal space embedded before the colon (e.g. `"ht\x00tp://..."`, `"ht p://..."`)
+    makes it silently return an empty scheme rather than raising, and trusting that would let
+    a crafted url bypass a same-string `scheme == "http"` comparison with its credential
+    intact.
+
+    The exception's `config_value` comes from `_redact_server_for_error`, and the `reason`
+    strings and warning below carry only the url via `_redact_url` and header names, so no
+    header value, url userinfo, query or fragment reaches the exception message or a log line.
+    """
+    for server in servers:
+        headers = server.get("headers") or {}
+        if not isinstance(headers, Mapping):
+            reason = (
+                f"server entry has a non-mapping 'headers' value ({type(headers).__name__}) - its "
+                "header names can't be checked for credentials, so this is rejected unconditionally"
+            )
+            raise InvalidConfigurationError(field_name, _redact_server_for_error(server), reason)
+        offending_headers = [key for key in cast("Mapping[Any, Any]", headers) if _is_credential_header(key)]
+
+        url = server.get("url")
+        url_is_str = isinstance(url, str)
+        url_has_credential = url_is_str and _url_has_userinfo(url)
+
+        if not offending_headers and not url_has_credential:
+            # Not credentialed by either route - out of this guard's scope regardless of
+            # what the rest of the url looks like (or whether there even is one).
+            continue
+
+        if not url_is_str:
+            # A missing or non-string url can't be proven to use https. The only way to
+            # reach here with one is via offending_headers (url_has_credential requires
+            # url_is_str) - reject unconditionally rather than silently letting it through.
+            reason = (
+                "server entry has a missing or non-string url and carries credential-bearing "
+                f"header(s) {offending_headers} - cannot verify the transport is https, so "
+                "this is rejected unconditionally"
+            )
+            raise InvalidConfigurationError(field_name, _redact_server_for_error(server), reason)
+
+        if offending_headers and url_has_credential:
+            credential_source = f"header(s) {offending_headers} and a credential embedded in the url's own userinfo"
+        elif offending_headers:
+            credential_source = f"header(s) {offending_headers}"
+        else:
+            credential_source = "a credential embedded in the url's own userinfo"
+
+        match = _SCHEME_RE.match(url)
+        scheme = match.group(1).lower() if match else None
+        if scheme == "https":
+            continue
+
+        if scheme != "http":
+            # Not a well-formed http/https scheme at all (unparseable, or some other
+            # scheme entirely) - this doesn't look like a deployer's deliberate choice of
+            # plaintext http, it looks like malformed or adversarially-crafted input. Never
+            # downgradable via allow_insecure, unlike the well-formed-http case below: that
+            # opt-in exists for a deployer knowingly choosing http, not for input the guard
+            # couldn't even parse as a normal scheme.
+            reason = (
+                f"server url '{_redact_url(url)}' has an unparseable or non-http(s) scheme "
+                f"and carries {credential_source} - the scheme could not be safely "
+                "determined, so this is rejected unconditionally"
+            )
+            raise InvalidConfigurationError(field_name, _redact_server_for_error(server), reason)
+
+        reason = (
+            f"server url '{_redact_url(url)}' uses plaintext http and carries "
+            f"{credential_source} - credentials would be sent unencrypted"
+        )
+        if not allow_insecure:
+            raise InvalidConfigurationError(field_name, _redact_server_for_error(server), reason)
+
+        logger.warning(
+            "Allowing insecure credentialed endpoint in %s: %s (allow_insecure_credentialed_endpoints=True)",
+            field_name,
+            reason,
+        )
+
+    return servers
+
+
 class StrandsSessionManagerType(StrEnum):
     FILE = "file"
     S3 = "s3"
 
 
+def _config_model_config() -> ConfigDict:
+    """Build the config models' settings.
+
+    Config can hold secrets (agent state, API keys, MCP/A2A headers), so validation errors omit
+    input values. Each model gets its own dict, so no settings are shared module state.
+    """
+    return ConfigDict(frozen=True, hide_input_in_errors=True)
+
+
 class ModelGuardrailConfig(BaseModel):
     """Configuration for model guardrail settings."""
 
-    model_config = {"frozen": True}
+    model_config = _config_model_config()
 
     guardrail_id: Annotated[str, StringConstraints(min_length=1, max_length=128, strip_whitespace=True)]
     guardrail_version: Annotated[str, StringConstraints(min_length=1, max_length=64, strip_whitespace=True)]
@@ -74,13 +372,13 @@ class ModelGuardrailConfig(BaseModel):
 class AgentModelConfig(BaseModel):
     """Configuration for Strands Agent model settings."""
 
-    model_config = {"frozen": True}
+    model_config = _config_model_config()
 
     provider: Annotated[str, StringConstraints(min_length=1, max_length=_MAX_PROVIDER_LEN, strip_whitespace=True)] = (
         "bedrock"
     )
     model_id: Annotated[str, StringConstraints(min_length=1, max_length=_MAX_MODEL_ID_LEN, strip_whitespace=True)] = (
-        "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        "us.anthropic.claude-haiku-5-5"
     )
     ollama_url: _BoundedOptionalUrl = None
     llamacpp_url: _BoundedOptionalUrl = None
@@ -116,7 +414,7 @@ class StrandsAgentConfig(BaseModel):
     environment-only backward compatibility.
     """
 
-    model_config = {"frozen": True}
+    model_config = _config_model_config()
 
     model: AgentModelConfig = Field(default_factory=AgentModelConfig)
 
@@ -158,10 +456,21 @@ class StrandsAgentConfig(BaseModel):
     session_s3_prefix: (
         Annotated[str, StringConstraints(min_length=1, max_length=_MAX_PREFIX_LEN, strip_whitespace=True)] | None
     ) = None
+    session_restore_dangling_tool_use: Literal["sanitize", "reject"] = "sanitize"
 
     conversation_window_size: int = Field(default=100, ge=1, le=_MAX_CONVERSATION_WINDOW_SIZE)
     conversation_truncate_results: bool = False
     agent_state_initial_values: dict[str, Any] = Field(default_factory=dict)
+
+    # Deployer-controlled, template-repo-agnostic opt-in. This repo ships to many adopters
+    # with different network topologies - some legitimately terminate TLS upstream (e.g. a
+    # service mesh sidecar) or run local dev/test MCP/A2A endpoints without credentials, so
+    # the guard below cannot hardcode one company's posture. When False (the default), an
+    # http MCP/A2A endpoint that carries a credential (a credential-bearing header or url
+    # userinfo) fails config load. When explicitly set True, that same combination is allowed
+    # and a warning is logged instead - the deployer is asserting they have accepted or
+    # otherwise mitigated the risk.
+    allow_insecure_credentialed_endpoints: bool = False
 
     mcp_servers: list[dict[str, Any]] = Field(default_factory=list, max_length=_MAX_SERVERS)
     a2a_servers: list[dict[str, Any]] = Field(default_factory=list, max_length=_MAX_SERVERS)
@@ -181,6 +490,25 @@ class StrandsAgentConfig(BaseModel):
             raise InvalidConfigurationError("session_id", v, "cannot be empty or whitespace")
         return v
 
+    @field_validator("mcp_servers", "a2a_servers")
+    @classmethod
+    def validate_servers_credentials(cls, v: list[dict[str, Any]], info: ValidationInfo) -> list[dict[str, Any]]:
+        allow_insecure = bool(info.data.get("allow_insecure_credentialed_endpoints", False))
+        field_name = info.field_name
+        assert field_name is not None  # always set for a field_validator, per pydantic v2
+        return _validate_server_credentials(v, field_name, allow_insecure=allow_insecure)
+
+    def check_mcp_server_credentials(self, servers: list[dict[str, Any]]) -> None:
+        """Apply the plaintext-credential guard to an MCP server list, honoring this config's opt-in.
+
+        Used where MCP connections are opened, so servers that didn't come from this config's own
+        validated `mcp_servers` are covered too.
+
+        Raises:
+            InvalidConfigurationError: If a server entry would send a credential over plaintext http
+        """
+        _validate_server_credentials(servers, "mcp_servers", allow_insecure=self.allow_insecure_credentialed_endpoints)
+
     @field_validator("session_type", mode="before")
     @classmethod
     def coerce_session_type(cls, v: Any) -> StrandsSessionManagerType | None:
@@ -192,6 +520,15 @@ class StrandsAgentConfig(BaseModel):
             return StrandsSessionManagerType(str(v).lower())
         except ValueError as e:
             raise InvalidConfigurationError("session_type", v, "must be one of: 'file', 's3'") from e
+
+    @field_validator("session_restore_dangling_tool_use", mode="before")
+    @classmethod
+    def coerce_session_restore_dangling_tool_use(cls, v: Any) -> str:
+        if isinstance(v, str):
+            lowered = v.lower()
+            if lowered in ("sanitize", "reject"):
+                return lowered
+        raise InvalidConfigurationError("session_restore_dangling_tool_use", v, "must be one of: 'sanitize', 'reject'")
 
     @field_validator("conversation_window_size")
     @classmethod
@@ -205,30 +542,20 @@ class StrandsAgentConfig(BaseModel):
     @field_validator("agent_state_initial_values")
     @classmethod
     def validate_agent_state_size(cls, v: dict[str, Any]) -> dict[str, Any]:
-        if len(v) > _MAX_AGENT_STATE_KEYS:
-            raise InvalidConfigurationError(
-                "agent_state_initial_values",
+        # InvalidConfigurationError renders its value into the message, and agent state can
+        # hold secrets, so only the state's shape is passed (see _redact_server_for_error).
+        try:
+            validate_bounded_dict(
                 v,
-                f"agent_state_initial_values exceeds {_MAX_AGENT_STATE_KEYS} top-level keys",
+                max_keys=_MAX_AGENT_STATE_KEYS,
+                max_key_len=_MAX_AGENT_STATE_KEY_LEN,
+                max_bytes=_MAX_AGENT_STATE_BYTES,
+                label="agent_state_initial_values",
             )
-        for key in v:
-            if len(key) > _MAX_AGENT_STATE_KEY_LEN:
-                raise InvalidConfigurationError(
-                    "agent_state_initial_values",
-                    v,
-                    f"agent_state_initial_values key exceeds {_MAX_AGENT_STATE_KEY_LEN} characters",
-                )
-
-        state_json_size = len(json.dumps(v, default=str).encode("utf-8"))
-        if state_json_size > _MAX_AGENT_STATE_BYTES:
-            size_error = (
-                f"agent_state_initial_values JSON size ({state_json_size} bytes) exceeds {_MAX_AGENT_STATE_BYTES} bytes"
-            )
+        except ValueError as e:
             raise InvalidConfigurationError(
-                "agent_state_initial_values",
-                v,
-                size_error,
-            )
+                "agent_state_initial_values", f"<redacted: {len(v)} top-level keys>", str(e)
+            ) from e
         return v
 
     @model_validator(mode="after")
@@ -255,7 +582,7 @@ class StrandsAgentConfig(BaseModel):
         """
         model = AgentModelConfig(
             provider=os.getenv("STRANDS_MODEL_PROVIDER", "bedrock").lower(),
-            model_id=os.getenv("STRANDS_MODEL_ID", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+            model_id=os.getenv("STRANDS_MODEL_ID", "us.anthropic.claude-haiku-5-5"),
             ollama_url=os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"),
             llamacpp_url=os.getenv("LLAMACPP_URL", "http://localhost:8080"),
             nims_base_url=os.getenv("NIMS_BASE_URL"),
@@ -320,6 +647,10 @@ class StrandsAgentConfig(BaseModel):
             max_conversation_length=int(os.getenv("STRANDS_MAX_CONVERSATION_LENGTH", "10")),
             enable_memory=os.getenv("STRANDS_ENABLE_MEMORY", "false").lower() == "true",
             knowledge_base_id=os.getenv("STRANDS_KNOWLEDGE_BASE_ID"),
+            allow_insecure_credentialed_endpoints=os.getenv(
+                "STRANDS_ALLOW_INSECURE_CREDENTIALED_ENDPOINTS", "false"
+            ).lower()
+            == "true",
             mcp_servers=mcp_servers,
             a2a_servers=a2a_servers,
             session_id=os.getenv("STRANDS_SESSION_ID"),
@@ -327,6 +658,10 @@ class StrandsAgentConfig(BaseModel):
             session_storage_dir=os.getenv("STRANDS_SESSION_STORAGE_DIR"),
             session_s3_bucket=os.getenv("STRANDS_SESSION_S3_BUCKET"),
             session_s3_prefix=os.getenv("STRANDS_SESSION_S3_PREFIX"),
+            session_restore_dangling_tool_use=cast(
+                "Literal['sanitize', 'reject']",
+                os.getenv("STRANDS_SESSION_RESTORE_DANGLING_TOOL_USE", "sanitize"),
+            ),
             conversation_window_size=int(os.getenv("STRANDS_CONVERSATION_WINDOW_SIZE", "100")),
             conversation_truncate_results=os.getenv("STRANDS_CONVERSATION_TRUNCATE_RESULTS", "false").lower() == "true",
             agent_state_initial_values=agent_state_initial_values,

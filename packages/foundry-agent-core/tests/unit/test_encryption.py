@@ -3,9 +3,11 @@
 """Tests for foundry_agent_core.encryption module."""
 
 import base64
+import json
 
 import pytest
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from foundry_agent_core.encryption import decrypt, encrypt, is_encrypted, load_encryption_key
 from foundry_agent_core.exceptions import AgentCreationError
@@ -33,6 +35,41 @@ class TestEncryptDecryptRoundTrip:
         payload = encrypt(data, VALID_KEY)
         result = decrypt(payload, VALID_KEY)
         assert result == data
+
+    def test_round_trip_lone_surrogate(self):
+        """A lone surrogate, which JSON input can carry, round-trips instead of raising."""
+        data = {"k": "\ud83d"}
+        assert decrypt(encrypt(data, VALID_KEY), VALID_KEY) == data
+
+
+class TestPlainUtf8Compatibility:
+    """Every plaintext is plain UTF-8, so a decrypt() that decodes strictly can read it."""
+
+    DATA = {"name": "café", "emoji": "\U0001f680"}
+
+    def _plaintext(self, data):
+        payload = encrypt(data, VALID_KEY)
+        return AESGCM(VALID_KEY).decrypt(
+            base64.b64decode(payload["nonce"]), base64.b64decode(payload["ciphertext"]), None
+        )
+
+    def test_plaintext_is_unchanged_for_valid_text(self):
+        assert self._plaintext(self.DATA) == json.dumps(self.DATA, ensure_ascii=False).encode("utf-8")
+
+    def test_lone_surrogate_plaintext_is_plain_utf8(self):
+        """The unpaired surrogate is JSON-escaped, so even a strict UTF-8 reader can load it."""
+        data = {"k": chr(0xD83D)}
+        assert json.loads(self._plaintext(data).decode("utf-8")) == data
+
+    def test_decrypts_payload_encrypted_as_plain_utf8(self):
+        nonce = b"\x00" * 12
+        ciphertext = AESGCM(VALID_KEY).encrypt(nonce, json.dumps(self.DATA, ensure_ascii=False).encode("utf-8"), None)
+        payload = {
+            "__encrypted": True,
+            "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+            "nonce": base64.b64encode(nonce).decode("ascii"),
+        }
+        assert decrypt(payload, VALID_KEY) == self.DATA
 
 
 class TestEncryptOutput:

@@ -1,6 +1,6 @@
 # foundry-strands-agent
 
-A Strands SDK adapter that implements the `foundry-agent-core` protocol surface.
+A Strands SDK adapter that implements the [`foundry-agent-core`](../../foundry-agent-core/README.md) protocol surface.
 
 ## Guides
 

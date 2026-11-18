@@ -14,8 +14,7 @@ Importing this module (or the package) registers nothing and mutates no
 container.
 
 For fine-grained control, construct the components directly and pass them to
-:class:`~foundry_strands_agent.service.AgentService` — see
-``docs/guides/extending.md``.
+:class:`~foundry_strands_agent.service.AgentService`.
 """
 
 from collections.abc import Callable
@@ -85,7 +84,7 @@ def create_default_container(
     **concrete instances**, not factory functions — an adopter who needs lazy
     construction of a replacement should register it on a bare
     :func:`~foundry_agent_core.create_dependency_container` themselves, or wire
-    ``AgentService`` directly (see ``docs/guides/extending.md``).
+    ``AgentService`` directly.
 
     ``AgentConfig`` is an alias of ``StrandsAgentConfig``, so the single config
     registration serves components resolving either name.

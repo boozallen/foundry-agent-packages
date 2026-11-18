@@ -6,7 +6,7 @@ These tests gate a regression where the published quickstart used to raise
 ``ConfigurationError: No factory registered for interface AgentFactory``
 because ``create_agent_service`` resolves five protocols that nothing
 registered. The test named ``test_documented_quickstart_sequence`` executes the
-exact sequence the README and ``docs/guides/quickstart.md`` publish, so a
+exact sequence the README and the quickstart guide publish, so a
 regression that re-breaks the documented journey fails CI.
 
 No model provider is exercised: ``AgentService.initialize`` only loads

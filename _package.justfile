@@ -9,14 +9,9 @@
 # recipe declares `set allow-duplicate-recipes := true` in its own justfile and
 # redefines it there; the local definition wins.
 
-# `--all-packages --all-groups` is deliberate even though this recipe runs at
-# package level: a uv workspace has a single root `.venv`, so a sync scoped to
-# one member prunes everything else out of it - the other three members and the
-# shared dev tooling (pytest, ruff, bandit, basedpyright) alike. Either flag
-# alone prunes the same way; both are required. A root `uv run` does re-install
-# what it needs here, because the root `[project]` declares all four members as
-# dependencies, but the pruned state still breaks any `--no-sync` or non-uv
-# invocation and churns ~100 packages on the next root command.
+# All seven packages share one workspace `.venv`. Sync and run commands use
+# `--all-packages --all-groups` so root and package-local recipes install the
+# same development dependencies, including dependencies declared by members.
 
 # Sync the shared workspace venv with the lockfile
 sync:
@@ -29,25 +24,25 @@ sync:
 
 # Run ruff lint + the bandit command-injection sink set for this package
 lint:
-    uv run ruff check src tests
-    uv run bandit -c ../../pyproject.toml -r src \
+    uv run --all-packages --all-groups ruff check src tests
+    uv run --all-packages --all-groups bandit -c ../../pyproject.toml -r src \
         -t B602,B603,B605,B607
 
 # Auto-fix lint issues with ruff
 lint-fix:
-    uv run ruff check src tests --fix
+    uv run --all-packages --all-groups ruff check src tests --fix
 
 # Check formatting with ruff
 format:
-    uv run ruff format --check src tests
+    uv run --all-packages --all-groups ruff format --check src tests
 
 # Format code with ruff
 format-fix:
-    uv run ruff format src tests
+    uv run --all-packages --all-groups ruff format src tests
 
 # Type check with basedpyright
 type-check:
-    uv run basedpyright src
+    uv run --all-packages --all-groups basedpyright src
 
 # The unit/integration split is by DIRECTORY (`tests/unit/`,
 # `tests/integration/`), never by marker, so a test's tier cannot be forgotten.
@@ -57,11 +52,11 @@ type-check:
 
 # Run this package's full suite: tests/unit/ plus tests/integration/
 test:
-    uv run pytest tests
+    uv run --all-packages --all-groups pytest tests
 
 # Run the unit tier only (tests/unit/)
 test-unit:
-    uv run pytest tests/unit
+    uv run --all-packages --all-groups pytest tests/unit
 
 # Coverage is disabled here because an integration-only slice cannot represent
 # overall coverage, and a package with no integration tests yet is not a
@@ -71,7 +66,7 @@ test-unit:
 test-integration:
     #!/usr/bin/env bash
     set -uo pipefail
-    uv run pytest tests/integration --no-cov --cov-fail-under=0
+    uv run --all-packages --all-groups pytest tests/integration --no-cov --cov-fail-under=0
     status=$?
     if [ "$status" -eq 5 ]; then
         echo "No integration tests collected - not a failure."
@@ -80,4 +75,4 @@ test-integration:
     exit $status
 
 # Run all quality checks (including tests)
-check: lint format type-check test
+check: sync lint format type-check test

@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from foundry_agent_fastapi.middleware._request_masking import mask_path, mask_query_params
 from foundry_agent_fastapi.utils import generate_correlation_id
 
 logger = logging.getLogger(__name__)
@@ -61,14 +62,18 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Record request start time
         start_time = time.time()
 
+        # Mask once and reuse everywhere below, so the log message text and the
+        # extra payload can never disagree on whether the path is masked.
+        masked_path = mask_path(str(request.url.path))
+
         # Extract request information
-        request_info = self._extract_request_info(request, correlation_id)
+        request_info = self._extract_request_info(request, correlation_id, masked_path)
 
         # Log request initiation
         logger.info(
             "Request started: %s %s",
             request.method,
-            request.url.path,
+            masked_path,
             extra=request_info,
         )
 
@@ -91,7 +96,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             logger.info(
                 "Request completed: %s %s -> %s",
                 request.method,
-                request.url.path,
+                masked_path,
                 response.status_code,
                 extra={**request_info, **response_info},
             )
@@ -106,7 +111,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             logger.exception(
                 "Request failed: %s %s",
                 request.method,
-                request.url.path,
+                masked_path,
                 extra={
                     **request_info,
                     "processing_time_ms": round(processing_time_ms, 2),
@@ -118,18 +123,19 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # Re-raise exception for error middleware to handle
             raise
 
-    def _extract_request_info(self, request: Request, correlation_id: str) -> dict[str, Any]:
+    def _extract_request_info(self, request: Request, correlation_id: str, masked_path: str) -> dict[str, Any]:
         """Extract structured information from HTTP request for logging.
 
         Args:
             request: HTTP request to extract information from
             correlation_id: Request correlation ID
+            masked_path: Request path with any session identifier already masked
 
         Returns:
             Dictionary with structured request information
         """
-        # Extract query parameters safely
-        query_params = dict(request.query_params) if request.query_params else {}
+        # Extract query parameters safely, masking any known identifier keys
+        query_params = mask_query_params(dict(request.query_params)) if request.query_params else {}
 
         # Extract relevant headers (excluding sensitive ones)
         headers_to_log = {
@@ -144,7 +150,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return {
             "correlation_id": correlation_id,
             "request_method": request.method,
-            "request_path": str(request.url.path),
+            "request_path": masked_path,
             "request_query": query_params,
             "request_headers": headers_to_log,
             "client_ip": request.client.host if request.client else None,

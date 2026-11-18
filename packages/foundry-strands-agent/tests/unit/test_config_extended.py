@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Extended config tests — spec: strands-agent-config."""
 
+import json
+from datetime import date
+
 import pytest
 from pydantic import ValidationError
 
 from foundry_agent_core import _MAX_QUERY_LEN, InvalidConfigurationError
 from foundry_strands_agent.config.models import (
+    _MAX_AGENT_STATE_BYTES,
     AgentModelConfig,
     ModelGuardrailConfig,
     StrandsAgentConfig,
@@ -42,6 +46,26 @@ class TestS3SessionTypeRequiresBucket:
         assert config.session_s3_bucket == "my-bucket"
 
 
+class TestSessionRestoreDanglingToolUse:
+    """Scenario: configurable dangling-`tool_use` remediation mode."""
+
+    def test_defaults_to_sanitize(self):
+        config = StrandsAgentConfig(model=AgentModelConfig())
+        assert config.session_restore_dangling_tool_use == "sanitize"
+
+    def test_accepts_reject(self):
+        config = StrandsAgentConfig(model=AgentModelConfig(), session_restore_dangling_tool_use="reject")
+        assert config.session_restore_dangling_tool_use == "reject"
+
+    def test_coerces_case(self):
+        config = StrandsAgentConfig(model=AgentModelConfig(), session_restore_dangling_tool_use="REJECT")
+        assert config.session_restore_dangling_tool_use == "reject"
+
+    def test_invalid_value_raises(self):
+        with pytest.raises((InvalidConfigurationError, ValidationError)):
+            StrandsAgentConfig(model=AgentModelConfig(), session_restore_dangling_tool_use="delete")
+
+
 class TestGuardrailConfig:
     """Scenario: Guardrail config."""
 
@@ -70,9 +94,10 @@ class TestBedrockModelConfig:
     """Scenario: Bedrock model config."""
 
     def test_bedrock_default_model(self):
+        """The default is an active Bedrock model, not the end-of-life Claude Sonnet 4."""
         model = AgentModelConfig(provider="bedrock")
         assert model.provider == "bedrock"
-        assert "anthropic" in model.model_id
+        assert model.model_id == "us.anthropic.claude-haiku-5-5"
 
     def test_custom_model_id(self):
         model = AgentModelConfig(provider="bedrock", model_id="custom-model-v1")
@@ -130,6 +155,68 @@ class TestConfigFieldValidation:
                 agent_state_initial_values={f"k{i}": i for i in range(129)},
             )
 
+    @pytest.mark.parametrize("char", ["λ", "😀"])
+    def test_agent_state_non_ascii_at_byte_cap_passes(self, char, utf8_sized_dict):
+        r"""The agent-state byte cap counts UTF-8 bytes, not ``\uXXXX`` escapes."""
+        state = utf8_sized_dict(char, _MAX_AGENT_STATE_BYTES)
+        assert len(json.dumps(state, ensure_ascii=False).encode("utf-8")) == _MAX_AGENT_STATE_BYTES
+        assert len(json.dumps(state)) > _MAX_AGENT_STATE_BYTES
+        config = StrandsAgentConfig(model=AgentModelConfig(), agent_state_initial_values=state)
+        assert config.agent_state_initial_values == state
+
+    @pytest.mark.parametrize("char", ["λ", "😀"])
+    def test_agent_state_non_ascii_over_byte_cap_raises(self, char, utf8_sized_dict):
+        """Non-ASCII agent state one UTF-8 byte over the cap is rejected by the size bound."""
+        with pytest.raises(InvalidConfigurationError, match="serializes above"):
+            StrandsAgentConfig(
+                model=AgentModelConfig(),
+                agent_state_initial_values=utf8_sized_dict(char, _MAX_AGENT_STATE_BYTES + 1),
+            )
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {f"k{i}": 0 for i in range(129)},  # too many keys
+            {"x" * 129: 0},  # key too long
+            {"pad": "x" * 1_048_576},  # too large
+        ],
+        ids=["keys", "key_length", "size"],
+    )
+    def test_agent_state_error_never_includes_values(self, extra):
+        """A rejected agent state is redacted to its shape, never rendered into the error."""
+        state = {"api_token": "SECRET-VALUE", **extra}
+        with pytest.raises(InvalidConfigurationError) as excinfo:
+            StrandsAgentConfig(model=AgentModelConfig(), agent_state_initial_values=state)
+        assert "SECRET-VALUE" not in str(excinfo.value)
+        assert "api_token" not in str(excinfo.value)
+        assert excinfo.value.config_value == f"<redacted: {len(state)} top-level keys>"
+
+    @pytest.mark.parametrize("bad", ["api_token=SECRET-VALUE", ["SECRET-VALUE"]], ids=["string", "list"])
+    def test_agent_state_type_error_never_includes_input(self, bad):
+        """Pydantic's own type error for agent state doesn't render the rejected input either."""
+        with pytest.raises(ValidationError) as excinfo:
+            StrandsAgentConfig(model=AgentModelConfig(), agent_state_initial_values=bad)
+        assert "SECRET-VALUE" not in str(excinfo.value)
+
+    def test_model_config_error_never_includes_api_key(self, monkeypatch):
+        """AgentModelConfig is built on its own by from_env(), and its errors omit input values too."""
+        monkeypatch.setenv("NIMS_API_KEY", "SECRET-VALUE" + "x" * 300)
+        with pytest.raises(ValidationError) as excinfo:
+            StrandsAgentConfig.from_env()
+        assert "SECRET-VALUE" not in str(excinfo.value)
+
+    def test_agent_state_json_cannot_encode_raises_config_error(self):
+        """A nested key JSON can't encode, such as a date key from YAML, is a config error, not a TypeError."""
+        state = {"api_token": "SECRET-VALUE", "a": {date(2024, 1, 1): "x"}}
+        with pytest.raises(InvalidConfigurationError, match="is not JSON-serializable") as excinfo:
+            StrandsAgentConfig(model=AgentModelConfig(), agent_state_initial_values=state)
+        assert "SECRET-VALUE" not in str(excinfo.value)
+
+    def test_agent_state_lone_surrogate_passes(self):
+        """A lone surrogate is sized rather than rejected."""
+        config = StrandsAgentConfig(model=AgentModelConfig(), agent_state_initial_values={"k": "\ud83d"})
+        assert config.agent_state_initial_values == {"k": "\ud83d"}
+
     def test_max_tokens_at_ceiling_passes(self):
         model = AgentModelConfig(max_tokens=131_072)
         assert model.max_tokens == 131_072
@@ -153,6 +240,11 @@ class TestConfigFromEnv:
         assert config.model.model_id == "custom-model"
         assert config.model.temperature == 0.5
         assert config.agent_name == "test-agent"
+
+    def test_from_env_default_model(self, monkeypatch):
+        """Without STRANDS_MODEL_ID, from_env() falls back to the same default as AgentModelConfig."""
+        monkeypatch.delenv("STRANDS_MODEL_ID", raising=False)
+        assert StrandsAgentConfig.from_env().model.model_id == "us.anthropic.claude-haiku-5-5"
 
     def test_from_env_invalid_temperature_raises(self, monkeypatch):
         monkeypatch.setenv("STRANDS_TEMPERATURE", "not-a-number")

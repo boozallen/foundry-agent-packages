@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
     hooks:
       - id: end-of-file-fixer
         exclude: |
@@ -18,7 +18,7 @@ repos:
                 openspec/changes/archive/
             )
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.5
+    rev: 488940d9de1b658fac229e34c521d75a6ea476f2  # v0.14.5
     hooks:
       - id: ruff-check
         types_or: [ python, pyi ]

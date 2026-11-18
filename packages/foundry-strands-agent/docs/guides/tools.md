@@ -185,8 +185,8 @@ These five checks are easy to verify by hand. Write the file, then load it with
 `load_tool_from_file`, which runs the same security analysis every loading route
 uses.
 
-The examples below write each file under `/opt/agent/tools/`, the default tools
-root inside the container image. On a local machine (for example macOS), that
+The examples below write each file under `/opt/agent/tools/`, the configured
+`tools_dir` from [The Tools Root](#the-tools-root) above. On a local machine (for example macOS), that
 path usually is not writable. Write the file under a directory you do own
 instead, such as `/tmp`, and pass that same directory as `tools_dir` so the
 loader checks the file against the root it actually lives in:
@@ -215,7 +215,7 @@ def read_cwd():
 import asyncio
 from foundry_strands_agent.tool_loader import load_tool_from_file
 
-asyncio.run(load_tool_from_file("/opt/agent/tools/bad_import.py"))
+asyncio.run(load_tool_from_file("/opt/agent/tools/bad_import.py", tools_dir="/opt/agent/tools"))
 ```
 
 **Expected**: `ToolLoadingError` is raised, naming `os` as the rejected import.

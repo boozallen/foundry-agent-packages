@@ -72,6 +72,7 @@ class TestDestroySession:
                 s3_bucket="my-bucket",
                 s3_prefix="sessions/",
                 s3_region="us-east-1",
+                dangling_tool_use_mode="sanitize",
             )
             mock_manager.delete_session.assert_called_once_with("test-session-123")
 

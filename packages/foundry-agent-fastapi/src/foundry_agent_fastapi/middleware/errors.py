@@ -18,6 +18,7 @@ from foundry_agent_core.exceptions import (
     ExternalServiceError,
     ValidationError,
 )
+from foundry_agent_fastapi.middleware._request_masking import mask_path, mask_query_params
 from foundry_agent_fastapi.models.responses import ErrorResponse
 from foundry_agent_fastapi.utils import generate_correlation_id
 
@@ -96,8 +97,8 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
     def _extract_operation_context(self, request: Request) -> dict[str, Any]:
         return {
             "request_method": request.method,
-            "request_path": str(request.url.path),
-            "request_query": dict(request.query_params),
+            "request_path": mask_path(str(request.url.path)),
+            "request_query": mask_query_params(dict(request.query_params)),
             "user_agent": request.headers.get("user-agent"),
             "request_id": getattr(request.state, "correlation_id", None),
             "client_ip": request.client.host if request.client else None,
@@ -110,13 +111,16 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
         request: Request,
         status_code: int,
     ) -> None:
+        # Mask once and reuse everywhere below, so the log message text and
+        # the extra payload can never disagree on whether the path is masked.
+        masked_path = mask_path(str(request.url.path))
         error_context = {
             "correlation_id": correlation_id,
             "error_type": type(domain_error).__name__,
             "error_message": str(domain_error),
             "http_status": status_code,
             "request_method": request.method,
-            "request_path": str(request.url.path),
+            "request_path": masked_path,
         }
         if hasattr(domain_error, "context") and domain_error.context:
             error_context["error_context"] = domain_error.context
@@ -125,7 +129,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
             logger.error(
                 "Server error during %s %s",
                 request.method,
-                request.url.path,
+                masked_path,
                 extra=error_context,
                 exc_info=True,
             )
@@ -133,7 +137,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
             logger.warning(
                 "Client error during %s %s",
                 request.method,
-                request.url.path,
+                masked_path,
                 extra=error_context,
             )
 

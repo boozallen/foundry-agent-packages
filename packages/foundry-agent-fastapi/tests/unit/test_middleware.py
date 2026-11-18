@@ -8,13 +8,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from opentelemetry import trace as otel_trace
 
-from foundry_agent_core.exceptions import ExternalServiceError
+from foundry_agent_core import mask_session_id
+from foundry_agent_core.exceptions import ExternalServiceError, ValidationError
 from foundry_agent_fastapi import (
     add_cors_middleware,
     add_error_handling_middleware,
     add_request_logging_middleware,
     add_tracing_middleware,
 )
+from foundry_agent_fastapi.middleware._request_masking import mask_path
 
 
 def test_cors_middleware_adds_headers():
@@ -199,6 +201,213 @@ def test_request_logging_middleware():
     # POST request
     response = client.post("/post-test", json={"key": "value"})
     assert response.status_code == 200
+
+
+def test_mask_path_masks_segment_after_session_marker():
+    """Test the literal "sessions" segment is preserved while the identifier after it is masked."""
+    masked = mask_path("/api/v1/sessions/abcdef1234567890/history")
+    assert "abcdef1234567890" not in masked
+    assert "/sessions/" in masked
+    assert masked.endswith("/history")
+
+
+def test_mask_path_leaves_unrelated_paths_unchanged():
+    """Test a path with no session marker segment is returned unchanged."""
+    assert mask_path("/api/v1/health") == "/api/v1/health"
+
+
+def test_mask_path_ignores_trailing_session_marker():
+    """Test a session marker with nothing after it is left unchanged."""
+    assert mask_path("/api/v1/sessions") == "/api/v1/sessions"
+
+
+def test_mask_path_masks_short_identifier():
+    """Test a session identifier under 8 characters is still masked, not left raw."""
+    masked = mask_path("/api/v1/sessions/abc123/history")
+    assert "abc123" not in masked
+
+
+def test_mask_path_masks_identifier_with_special_characters():
+    """Test a session identifier containing '.', '+', '=', or '~' is still masked."""
+    masked = mask_path("/api/v1/sessions/abc.123+456=789~xyz/history")
+    assert "abc.123+456=789~xyz" not in masked
+
+
+def test_request_logging_middleware_does_not_remask_after_percent_encoded_slash(caplog):
+    """Documents a known gap: content after a percent-encoded slash is not re-masked.
+
+    Starlette decodes a percent-encoded slash (%2F) in the identifier before
+    mask_path runs, so only the segment up to the decoded slash is masked.
+    """
+    app = FastAPI()
+    add_request_logging_middleware(app)
+
+    @app.get("/{path:path}")
+    async def catch_all(path: str):
+        return {"path": path}
+
+    client = TestClient(app)
+
+    with caplog.at_level("INFO"):
+        response = client.get("/sessions/a%2FSECRET/history")
+
+    assert response.status_code == 200
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.logging"]
+    assert middleware_records
+    for record in middleware_records:
+        assert "SECRET" in record.request_path
+
+
+def test_request_logging_middleware_masks_session_id_in_path(caplog):
+    """Test request/response/failure logs mask a session identifier in the URL path."""
+    app = FastAPI()
+    add_request_logging_middleware(app)
+
+    @app.get("/sessions/{session_id}/history")
+    async def history_route(session_id: str):
+        return {"session_id": session_id}
+
+    client = TestClient(app)
+    session_id = "abcdef1234567890"
+
+    with caplog.at_level("INFO"):
+        response = client.get(f"/sessions/{session_id}/history")
+
+    assert response.status_code == 200
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.logging"]
+    assert middleware_records
+    for record in middleware_records:
+        request_path = getattr(record, "request_path", "")
+        assert session_id not in request_path
+        assert session_id not in record.getMessage()
+
+
+def test_request_logging_middleware_masks_session_id_on_failure(caplog):
+    """Test the failure-path log masks a session identifier in the URL path."""
+    app = FastAPI()
+    add_request_logging_middleware(app)
+
+    @app.get("/sessions/{session_id}/history")
+    async def failing_history_route(session_id: str):
+        raise RuntimeError("boom")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    session_id = "abcdef1234567890"
+
+    with caplog.at_level("INFO"):
+        client.get(f"/sessions/{session_id}/history")
+
+    failure_records = [r for r in caplog.records if "Request failed" in r.getMessage()]
+    assert failure_records
+    for record in failure_records:
+        request_path = getattr(record, "request_path", "")
+        assert session_id not in request_path
+        assert session_id not in record.getMessage()
+
+
+def test_request_logging_middleware_masks_session_id_query_param(caplog):
+    """Test a session_id query parameter is masked while other query params are untouched."""
+    app = FastAPI()
+    add_request_logging_middleware(app)
+
+    @app.get("/history")
+    async def history_route(session_id: str, page: int = 1):
+        return {"session_id": session_id, "page": page}
+
+    client = TestClient(app)
+    session_id = "abcdef1234567890"
+
+    with caplog.at_level("INFO"):
+        response = client.get("/history", params={"session_id": session_id, "page": 2})
+
+    assert response.status_code == 200
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.logging"]
+    assert middleware_records
+    for record in middleware_records:
+        request_query = record.request_query
+        assert request_query["session_id"] == mask_session_id(session_id)
+        assert request_query["page"] == "2"
+
+
+def test_error_handling_middleware_masks_session_id_on_domain_error(caplog):
+    """Test a DomainError raised on a /sessions/{id} route masks the id in the error log."""
+    app = FastAPI()
+    add_error_handling_middleware(app)
+
+    @app.get("/sessions/{session_id}/history")
+    async def failing_history_route(session_id: str):
+        raise ValidationError("bad request")
+
+    client = TestClient(app)
+    session_id = "abcdef1234567890"
+
+    with caplog.at_level("WARNING"):
+        client.get(f"/sessions/{session_id}/history")
+
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.errors"]
+    assert middleware_records
+    for record in middleware_records:
+        assert session_id not in record.getMessage()
+        assert session_id not in record.request_path
+
+
+def test_error_handling_middleware_masks_session_id_on_unhandled_exception(caplog):
+    """Test an unhandled exception on a /sessions/{id} route masks the id in path and query."""
+    app = FastAPI()
+    add_error_handling_middleware(app)
+
+    @app.get("/sessions/{session_id}/history")
+    async def failing_history_route(session_id: str, other_id: str):
+        raise RuntimeError("boom")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    session_id = "abcdef1234567890"
+    other_id = "unrelated12345"
+
+    with caplog.at_level("ERROR"):
+        client.get(f"/sessions/{session_id}/history", params={"other_id": other_id})
+
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.errors"]
+    assert middleware_records
+    for record in middleware_records:
+        assert session_id not in record.getMessage()
+        assert session_id not in record.request_path
+        # The unhandled-exception path always populates error_context (it's
+        # domain_error.context, merged from a non-empty operation_context by
+        # the translator) - assert on it directly rather than behind an `if`,
+        # so a future regression that empties it fails this test instead of
+        # silently skipping the check.
+        error_context = record.error_context
+        assert session_id not in str(error_context)
+        # other_id is not a known session-identifier query key, so it's untouched.
+        assert error_context["request_query"]["other_id"] == other_id
+
+
+def test_error_handling_middleware_leaks_session_id_embedded_in_exception_message(caplog):
+    """Documents a known gap: an identifier embedded in an exception's own message is not masked.
+
+    Only request_path/request_query are masked - error_message and
+    error_context.original_error_message come from str(original_error), which
+    InfrastructureErrorTranslator.preserve_error_context preserves verbatim.
+    """
+    app = FastAPI()
+    add_error_handling_middleware(app)
+    session_id = "abcdef1234567890"
+
+    @app.get("/lookup")
+    async def failing_lookup_route():
+        raise KeyError(session_id)
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with caplog.at_level("ERROR"):
+        client.get("/lookup")
+
+    middleware_records = [r for r in caplog.records if r.name == "foundry_agent_fastapi.middleware.errors"]
+    assert middleware_records
+    for record in middleware_records:
+        assert session_id in record.error_message
+        assert session_id in str(record.error_context)
 
 
 def test_combined_middleware_stack():

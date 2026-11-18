@@ -3,8 +3,21 @@
 ## Prerequisites
 
 - Python >= 3.13
-- [uv](https://docs.astral.sh/uv/) >= 0.5.0
+- [uv](https://docs.astral.sh/uv/) >= 0.12.1
 - [just](https://github.com/casey/just) (command runner)
+
+### Windows
+
+The [`justfile`](../../../justfile) recipes are written for a POSIX shell. On Windows, `just` needs
+`sh` and `bash` on the `PATH`, for example from Git Bash. Without them, run the
+version scripts directly. They work in any shell.
+
+```bash
+uv run python scripts/bump_version.py foundry-agent-core patch   # just version-patch foundry-agent-core
+uv run python scripts/bump_synthetic_version.py                  # just bump-synthetic-version
+uv lock                                                          #   (second step of the same recipe)
+uv run python scripts/bump_synthetic_version.py --check          # just check-synthetic-version
+```
 
 ## Setup
 
@@ -16,7 +29,7 @@ cd foundry-agent-packages
 uv sync --all-packages --all-groups
 ```
 
-This installs all five workspace packages in editable mode plus the dev
+This installs every workspace package in editable mode plus the dev
 dependency group (pytest, ruff, pyright).
 
 ## Development Workflow
@@ -34,8 +47,8 @@ Tests are split by **directory**, not by marker: every package has
 `tests/unit/` and `tests/integration/`, and a test's tier is decided by where
 its file lives. No recipe passes `-m`. The `integration` marker stays declared
 as a trait tag, but nothing selects on it. `conftest.py` stays at the `tests/`
-root, and no `tests/` directory has an `__init__.py` (see [AGENTS.md](../../../AGENTS.md)
-for why adding one silently drops tests).
+root, and no `tests/` directory has an `__init__.py` (see [the unit/integration split is by directory](../../../AGENTS.md#the-unitintegration-split-is-by-directory)
+in AGENTS.md for why adding one silently drops tests).
 
 Uses `pytest` with `asyncio_mode = "auto"`. Each package owns its own coverage
 configuration in its `pyproject.toml`, including the `--cov-fail-under=70` gate,
@@ -62,10 +75,10 @@ just dead-code                             # advisory vulture scan (not gated)
 ```
 
 Ruff is configured for Python 3.13 with a 120-char line length. See
-`pyproject.toml` for the full rule set; STIG V-222604 command-injection sinks
+[`pyproject.toml`](../../../pyproject.toml) for the full rule set; STIG V-222604 command-injection sinks
 (`S102`, `S307`, `S602-S607`) are gated via Ruff, and `just lint` additionally
-runs the narrow `bandit` sink set (`B602,B603,B605,B607`). `just lint` run
-from inside `packages/<pkg>/` runs both tools too,
+runs the narrow `bandit` sink set (`B602,B603,B605,B607`) - the same set CI runs
+independently. `just lint` run from inside `packages/<pkg>/` runs both tools too,
 scoped to that package (it resolves the shared bandit config as
 `../../pyproject.toml`, since `just` runs recipes with the invoking directory as
 the working directory).
@@ -108,7 +121,9 @@ so changes are immediately available without re-publishing.
 │       ├── foundry-agent-core/
 │       ├── foundry-agent-config/
 │       ├── foundry-agent-fastapi/
-│       └── foundry-strands-agent/
+│       ├── foundry-strands-agent/
+│       ├── foundry-aws-utilities/
+│       ├── foundry-auth/
 └── my-agent/  # your consuming application
 ```
 

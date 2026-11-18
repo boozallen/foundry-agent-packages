@@ -64,6 +64,49 @@ class TestQueryOrchestratorProcessQuery:
         with pytest.raises(QueryProcessingError):
             await orchestrator.process_query(request)
 
+    @pytest.mark.asyncio
+    async def test_process_query_start_log_has_no_raw_query_text(self, orchestrator, caplog):
+        mock_agent = MagicMock()
+        mock_agent.invoke_async = AsyncMock(return_value="Agent response text")
+        mock_agent.close = AsyncMock()
+
+        orchestrator._agent_factory.create_agent_with_tool_registry = AsyncMock(return_value=mock_agent)
+        orchestrator._response_processor.process_response = AsyncMock(
+            return_value=AgentResponse(content="processed", processing_time_ms=10.0)
+        )
+
+        query_text = "what is the secret launch code"
+        request = AgentRequest(query=query_text)
+        with caplog.at_level("INFO"):
+            await orchestrator.process_query(request)
+
+        start_records = [r for r in caplog.records if r.getMessage() == "Starting query processing"]
+        assert start_records
+        for record in start_records:
+            assert query_text not in str(record.__dict__)
+            assert getattr(record, "query_length", None) == len(query_text)
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_context_has_no_raw_query_text(self, orchestrator):
+        mock_agent = MagicMock()
+        mock_agent.invoke_async = AsyncMock(side_effect=TimeoutError("timed out"))
+        mock_agent.close = AsyncMock()
+
+        orchestrator._agent_factory.create_agent_with_tool_registry = AsyncMock(return_value=mock_agent)
+
+        query_text = "what is the secret launch code"
+        request = AgentRequest(query=query_text)
+        # _create_agent_context's `except Exception` re-wraps whatever is
+        # raised while the agent is in use (including QueryTimeoutError)
+        # into a QueryProcessingError - pre-existing behavior, out of scope
+        # for this change. What matters here is that the raw query text
+        # does not leak into that wrapped exception either.
+        with pytest.raises(QueryProcessingError) as exc_info:
+            await orchestrator.process_query(request)
+
+        assert query_text not in str(exc_info.value)
+        assert query_text not in str(exc_info.value.context)
+
 
 class TestPreprocessQuery:
     @pytest.mark.asyncio

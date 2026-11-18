@@ -210,6 +210,18 @@ class TestFromEnvBackwardCompat:
         assert len(config.mcp_servers) == 1
         assert config.mcp_servers[0]["url"] == "http://localhost:8080"
 
+    def test_from_env_session_restore_dangling_tool_use_defaults_to_sanitize(self):
+        config = StrandsAgentConfig.from_env()
+
+        assert config.session_restore_dangling_tool_use == "sanitize"
+
+    def test_from_env_session_restore_dangling_tool_use_override(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_SESSION_RESTORE_DANGLING_TOOL_USE", "reject")
+
+        config = StrandsAgentConfig.from_env()
+
+        assert config.session_restore_dangling_tool_use == "reject"
+
 
 class TestNimsFromEnv:
     def test_nims_env_vars_populated(self, monkeypatch):

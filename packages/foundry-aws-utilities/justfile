@@ -1,0 +1,7 @@
+# Every recipe for this package comes from the workspace-root
+# `_package.justfile`, so the recipe set is defined once for all packages.
+import "../../_package.justfile"
+
+# List available recipes
+default:
+    @just --list

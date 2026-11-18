@@ -57,7 +57,11 @@ def encrypt(data: dict[str, Any], key: bytes) -> dict[str, Any]:
     Returns:
         Dict with __encrypted marker, base64-encoded ciphertext, and nonce.
     """
-    plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    try:
+        plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        # An unpaired surrogate has no UTF-8 form; ASCII-escaped JSON keeps the plaintext valid UTF-8.
+        plaintext = json.dumps(data).encode("ascii")
     nonce = os.urandom(_NONCE_BYTES)
     aesgcm = AESGCM(key)
     ciphertext = aesgcm.encrypt(nonce, plaintext, None)

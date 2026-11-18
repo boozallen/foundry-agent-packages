@@ -39,7 +39,7 @@ class TestDefaultSessionManagerFactories:
             _default_s3_session_manager(session_id="test-123", s3_bucket=None)
 
     def test_s3_session_manager_creates_with_bucket(self):
-        with patch("foundry_strands_agent.factory.S3SessionManager") as mock_s3:
+        with patch("foundry_strands_agent.factory.GuardedS3SessionManager") as mock_s3:
             mock_s3.return_value = MagicMock()
             _default_s3_session_manager(
                 session_id="test-123",
@@ -51,7 +51,8 @@ class TestDefaultSessionManagerFactories:
                 session_id="test-123",
                 bucket="my-bucket",
                 prefix="prefix/",
-                region="us-east-1",
+                region_name="us-east-1",
+                dangling_tool_use_mode="sanitize",
             )
 
 
@@ -259,7 +260,9 @@ class TestNimsModelFactory:
             assert call_kwargs["model_id"] == "meta/llama-3.1-8b-instruct"
             assert call_kwargs["client_args"]["base_url"] == "https://integrate.api.nvidia.com/v1"
             assert call_kwargs["client_args"]["api_key"] == "no-key"
-            assert call_kwargs["client_args"]["http_client"] is not None
+            # http_client is no longer in the static client_args dict - NIMSModel's
+            # _resolve_client_args() override injects a fresh one per request instead.
+            assert "http_client" not in call_kwargs["client_args"]
 
     def test_explicit_self_hosted_cluster_url(self):
         with patch("foundry_strands_agent.factory.NIMSModel") as mock_cls:
@@ -274,6 +277,60 @@ class TestNimsModelFactory:
             mock_cls.return_value = MagicMock()
             _default_nims_model({"model": {"model_id": "meta/llama-3.1-8b-instruct", "nims_api_key": "nvapi-abc123"}})
             assert mock_cls.call_args[1]["client_args"]["api_key"] == "nvapi-abc123"
+
+
+class TestNimsModelClientLifecycle:
+    """Real NIMSModel + real AsyncOpenAI construction, no model-class mocking.
+
+    TestNimsModelFactory above mocks NIMSModel itself and only asserts on constructor
+    call_args — it can't catch a wrong http_client type or a client reused after being
+    closed, since it never constructs a real client. These tests do.
+    """
+
+    def test_resolve_client_args_returns_a_fresh_async_client_each_call(self):
+        import httpx
+
+        model = NIMSModel(client_args={"base_url": "https://example.test/v1", "api_key": "k"}, model_id="m")
+        first = model._resolve_client_args()
+        second = model._resolve_client_args()
+        assert isinstance(first["http_client"], httpx.AsyncClient)
+        assert isinstance(second["http_client"], httpx.AsyncClient)
+        assert first["http_client"] is not second["http_client"]
+
+    async def test_second_request_succeeds_after_first_completes(self):
+        import httpx
+
+        # _fresh_tls_httpx_async_client() hardcodes a real TLS context with no transport
+        # seam, so the mock transport has to be injected by patching that helper itself -
+        # each call still returns a brand-new client (preserving the "distinct client"
+        # property under test), just wired to a MockTransport instead of a real TLS
+        # context, so the test can drive a real request through it end to end.
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(200, json={"id": "x", "choices": [], "model": "m", "object": "chat.completion"})
+
+        def fresh_mock_client() -> httpx.AsyncClient:
+            return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        model = NIMSModel(client_args={"base_url": "https://example.test/v1", "api_key": "k"}, model_id="m")
+
+        with patch("foundry_strands_agent.factory._fresh_tls_httpx_async_client", side_effect=fresh_mock_client):
+            async with model._get_client() as client_one:
+                response_one = await client_one.chat.completions.create(model="m", messages=[])
+            assert response_one.id == "x"
+
+            # Second call must not raise TypeError (wrong client type) or RuntimeError
+            # (reusing a client the first call's __aexit__ already closed) - and must
+            # actually reach the handler again, not just avoid raising.
+            async with model._get_client() as client_two:
+                assert client_one is not client_two
+                response_two = await client_two.chat.completions.create(model="m", messages=[])
+            assert response_two.id == "x"
+
+        assert call_count == 2
 
 
 class TestNimsFactoryDispatch:
@@ -351,6 +408,7 @@ class TestBedrockModelTemperature:
         [
             "us.anthropic.claude-opus-5-20260101-v1:0",
             "us.anthropic.claude-sonnet-5-20260101-v1:0",
+            "us.anthropic.claude-haiku-5-5",
             "us.anthropic.claude-fable-5-20260101-v1:0",
             "us.anthropic.claude-mythos-5-20260101-v1:0",
             "us.anthropic.claude-mythos-preview-20260101-v1:0",
@@ -369,6 +427,15 @@ class TestBedrockModelTemperature:
             _default_bedrock_model(config)
             call_kwargs = mock_cls.call_args[1]
             assert call_kwargs["temperature"] is None
+
+    def test_temperature_passed_for_claude_haiku_4_5(self):
+        # Haiku 4.5 still accepts temperature: only Haiku 5.x is on the list.
+        with patch("foundry_strands_agent.factory.BedrockModel") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            config = {"model": {"model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "temperature": 0.3}}
+            _default_bedrock_model(config)
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["temperature"] == 0.3
 
     def test_temperature_passed_for_model_id_with_digit_suffix_collision(self):
         # A hypothetical distinct future model "claude-opus-50" must not be mistaken for

@@ -12,7 +12,7 @@ lifecycle primitives. Zero coupling to any specific agent framework.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+See [Adopting these packages](../../releases/adopting.md) for
 the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -40,6 +40,7 @@ request = AgentRequest(session_id="user-session-01", query="Hello")
 | DI container | `create_dependency_container()`, scoped resolution, cycle detection, startup validation |
 | Protocols | `AgentBackend`, `QueryProcessor`, `ResponseProcessor`, `ErrorTranslator`, `DependencyContainer` |
 | Types | `AgentRequest`, `AgentResponse` (Pydantic v2, frozen) |
+| Validation | `validate_bounded_dict` bounds a dict's key count, key length, and UTF-8 JSON size (DISA STIG V-222612) |
 | Exceptions | `DomainError` and a typed hierarchy (`ConfigurationError`, `AgentCreationError`, `ExternalServiceError`, `ToolExecutionError`, `QueryTimeoutError`) |
 | Encryption | `encrypt`, `decrypt`, `is_encrypted`, `load_encryption_key` (AES-256-GCM) |
 | Masking | `mask_session_id`, `redact_session_ids` for log sanitization |
@@ -54,7 +55,7 @@ resource limits (DISA STIG V-222612).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-core/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-core/CHANGELOG.md)
-- [Source](https://github.com/boozallen/foundry-agent-packages/tree/develop/packages/foundry-agent-core)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
+- [README](../../../../packages/foundry-agent-core/README.md)
+- [Changelog](../../../../packages/foundry-agent-core/CHANGELOG.md)
+- [Source](../../../../packages/foundry-agent-core/)
+- [License (Apache-2.0)](../../../../LICENSE)

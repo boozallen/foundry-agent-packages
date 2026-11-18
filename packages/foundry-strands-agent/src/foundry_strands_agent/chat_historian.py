@@ -5,58 +5,21 @@
 This module implements the ChatHistoryManager protocol, coordinating all services to manage the chat history.
 """
 
-import json
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
-from strands.session import FileSessionManager, S3SessionManager
+from strands.session import FileSessionManager, S3SessionManager, SessionRepository
 from strands.session.file_session_manager import SESSION_PREFIX as FILE_SESSION_PREFIX
+from strands.session.s3_session_manager import SESSION_PREFIX as S3_SESSION_PREFIX
 from strands.types.exceptions import SessionException
 from strands.types.session import Session, SessionMessage, SessionType
 
-from foundry_agent_core import QueryProcessingError, redact_session_ids
+from foundry_agent_core import QueryProcessingError, mask_session_id
 from foundry_strands_agent.config.models import StrandsAgentConfig
 from foundry_strands_agent.protocols import AgentFactory, ChatHistoryManager
 
 logger = logging.getLogger(__name__)
-
-
-class _SessionFrom:
-    @classmethod
-    def dict_from_str(cls, session_str: str) -> dict[str, Any] | None:
-        try:
-            session_metadata = json.loads(session_str)
-            if not session_metadata or not isinstance(session_metadata, dict) or not session_metadata.get("session_id"):
-                return None
-            return cast(dict[str, Any], session_metadata)
-        except Exception as e:
-            logger.exception("Failed to read session metadata from %s: %s", redact_session_ids(session_str), e)
-            return None
-
-    @classmethod
-    def json_dict(cls, session_dict: dict[str, Any] | Any) -> Session | None:
-        try:
-            if not isinstance(session_dict, dict) or not session_dict.get("session_id"):
-                return None
-
-            # work around bug in strands.types.session.Session.from_dict():
-            if session_type := session_dict.get("session_type"):
-                session_dict["session_type"] = SessionType(session_type)
-            session = Session.from_dict(session_dict)
-            return session
-        except Exception as e:
-            logger.exception("Failed to read session metadata from %s: %s", redact_session_ids(repr(session_dict)), e)
-            return None
-
-    @classmethod
-    def session_str(cls, session_str: str) -> Session | None:
-        try:
-            json_dict = json.loads(session_str)
-            return cls.json_dict(json_dict)
-        except Exception as e:
-            logger.exception("Failed to read session metadata from %s: %s", redact_session_ids(session_str), e)
-            return None
 
 
 class ChatHistorian(ChatHistoryManager):
@@ -121,6 +84,11 @@ class ChatHistorian(ChatHistoryManager):
     ) -> list[Session]:
         """Get chat sessions history from file-based storage.
 
+        Session IDs come from the `session_<id>` directory names under `storage_dir`.
+        Each session is read through `session_repository.read_session()`, so a
+        session manager that encrypts at rest (`EncryptedFileSessionManager`)
+        decrypts it the same way it does for a single-session read.
+
         Args:
             session_repository: The session repository instance
             limit: Maximum number of sessions to return
@@ -137,45 +105,30 @@ class ChatHistorian(ChatHistoryManager):
         if not storage_path.exists() or not storage_path.is_dir():
             return []
 
-        # Get all sessions metadata from {storage_dir}/{FILE_SESSION_PREFIX}_{session_id}/session.json:
         sessions: list[Session] = []
         for item in storage_path.iterdir():
-            if FILE_SESSION_PREFIX and not item.name.startswith(FILE_SESSION_PREFIX):
+            if not item.name.startswith(FILE_SESSION_PREFIX) or not item.is_dir():
                 continue
 
-            if not item.is_dir():
-                continue
+            session = self._read_listed_session(session_repository, item.name[len(FILE_SESSION_PREFIX) :])
+            if session:
+                sessions.append(session)
 
-            session_metafile = item / "session.json"
-            if not session_metafile.is_file():
-                continue
-
-            try:
-                session = _SessionFrom.session_str(session_metafile.read_text())
-                if session:
-                    sessions.append(session)
-            except Exception:
-                logger.warning("Failed to read session metadata from %s", session_metafile)
-                continue
-
-        if len(sessions) <= offset:
-            return []
-
-        sessions.sort(key=lambda s: s.updated_at or "0", reverse=True)
-
-        ret = sessions[offset : offset + limit]
-        return ret
+        return self._page_sessions(sessions, limit, offset)
 
     async def _get_chat_s3_sessions_history(
         self, session_repository: S3SessionManager, limit: int, offset: int
     ) -> list[Session]:
         """Get chat sessions history from S3-based storage.
 
-        Lists all sessions from S3 by:
-        1. Listing S3 objects with session prefix pattern
-        2. Reading session.json files from each session directory
-        3. Parsing Session objects and sorting by updated_at
-        4. Applying pagination (limit/offset)
+        Lists the `session_<id>/` prefixes under the repository's bucket and prefix
+        with the `list_objects_v2` paginator (one entry per session, past 1000
+        sessions), then reads each session through `session_repository.read_session()`.
+
+        IAM: uses `s3:ListBucket` on the session bucket and prefix (as the S3 session
+        manager's own message listing and session delete already do) plus one
+        `s3:GetObject` per session. Without `s3:ListBucket` the listing call fails and
+        the error is raised; it is not reported as an empty list.
 
         Args:
             session_repository: The S3 session repository instance
@@ -185,8 +138,51 @@ class ChatHistorian(ChatHistoryManager):
         Returns:
             list[Session]: List of chat sessions
         """
-        # client = session_repository.client
-        return []
+        # Normalize the prefix the way S3SessionManager._get_session_path() does when it writes keys.
+        base = session_repository.prefix.strip("/")
+        list_prefix = f"{base}/{S3_SESSION_PREFIX}" if base else S3_SESSION_PREFIX
+
+        paginator = session_repository.client.get_paginator("list_objects_v2")
+        sessions: list[Session] = []
+        for page in paginator.paginate(Bucket=session_repository.bucket, Prefix=list_prefix, Delimiter="/"):
+            for common_prefix in page.get("CommonPrefixes", []):
+                session_id = common_prefix["Prefix"][len(list_prefix) :].rstrip("/")
+                session = self._read_listed_session(session_repository, session_id)
+                if session:
+                    sessions.append(session)
+
+        return self._page_sessions(sessions, limit, offset)
+
+    @staticmethod
+    def _read_listed_session(session_repository: SessionRepository, session_id: str) -> Session | None:
+        """Read one session for a listing, or return None to leave it out.
+
+        An empty session ID, a missing session, or one whose metadata has no
+        session_id is skipped silently. A session that can't be read or parsed is skipped with a warning
+        that carries only the masked session ID and the exception type: SDK error
+        messages embed paths and keys that contain the raw session ID.
+        """
+        if not session_id:
+            return None
+
+        try:
+            session = session_repository.read_session(session_id)
+            if session is None or not session.session_id:
+                return None
+
+            # Session.from_dict() leaves session_type as the raw string from storage.
+            if not isinstance(session.session_type, SessionType):
+                session.session_type = SessionType(session.session_type)
+            return session
+        except Exception as e:
+            logger.warning("Skipping unreadable chat session %s: %s", mask_session_id(session_id), type(e).__name__)
+            return None
+
+    @staticmethod
+    def _page_sessions(sessions: list[Session], limit: int, offset: int) -> list[Session]:
+        """Sort sessions most recently updated first, then apply offset and limit."""
+        sessions.sort(key=lambda s: s.updated_at or "0", reverse=True)
+        return sessions[offset : offset + limit]
 
     async def get_chat_session_messages_history(
         self, session_id: str, limit: int | None = None, offset: int | None = None
