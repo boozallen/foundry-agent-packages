@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixes
 
+- replace the end-of-life default Bedrock model
 - raise chunk_index ceiling to match max document size
 - remove stale alpha status from docs and package metadata
 - implement ${VAR} env-var interpolation for MCP server headers
@@ -26,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - make add_consumer/remove_consumer non-blocking during MCP reconnect
 - never strand a queued MCP consumer change or mask a reconnect error
 - recover a shared MCP client after a failed reconnect
-- 3.2.2, skip a TOOL_SPEC tool Strands can't load or would misname, and warn on same-named tools
-- 3.2.4, bind the memory tool's knowledge base id and region
+- skip a TOOL_SPEC tool Strands can't load or would misname, and warn on same-named tools
+- bind the memory tool's knowledge base id and region
 
 ### Maintenance
 

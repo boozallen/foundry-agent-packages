@@ -14,7 +14,7 @@ and clear API boundaries matter.
 
 The repo provides:
 
-- Seven independently versioned packages under `packages/`
+- Six independently versioned packages under `packages/`
 - A shared workspace `pyproject.toml` with cross-cutting tooling
   (ruff, basedpyright, bandit, vulture, deptry, pytest)
 - Release tooling that builds wheels + SBOM + scan reports per package
@@ -85,7 +85,7 @@ foundry-agent-packages/
 ├── docs/                       # cross-cutting docs (release model, dev setup)
 ├── openspec/                   # spec-driven workflow (optional)
 ├── scripts/bump_version.py     # per-package version bumper
-├── .github/workflows/          # ci.yml, release.yml
+├── .github/workflows/          # release.yml
 ├── pyproject.toml              # workspace root, shared tooling config
 └── justfile                    # developer commands
 ```
@@ -162,12 +162,12 @@ HTML coverage is **always on**, never a recipe: each package's `addopts` carries
 per-package runs write to distinct directories instead of overwriting one flat
 `htmlcov/`. There is no `test-cov` recipe; it was a second name for `just test`.
 
-Each of the seven packages also has its own local `justfile`
+Each of the six packages also has its own local `justfile`
 (`packages/<pkg>/justfile`) scoped to just that package - running `just test`
 from inside a package directory intercepts there and tests only that package,
 not the whole workspace.
 
-Those seven files are **stubs**: each one imports the workspace-root
+Those six files are **stubs**: each one imports the workspace-root
 `_package.justfile`, which is the single definition of the shared per-package
 recipe set (`sync`, `lint`, `lint-fix`, `format`, `format-fix`, `type-check`,
 `test`, `test-unit`, `test-integration`, `check`) plus a local `default` that
@@ -208,7 +208,7 @@ the five identical packages, but carries its own narrow `filterwarnings` list
 (`starlette`'s `StarletteDeprecationWarning` and a `DeprecationWarning` from
 `starlette.testclient`, surfaced by FastAPI's `TestClient` in its
 router/websocket tests) rather than either existing template's list verbatim -
-the shared invariant across all seven is `--strict-markers
+the shared invariant across all six is `--strict-markers
 --strict-config` with no `-m`, not byte-identical `markers`/`filterwarnings`.
 The
 root `pyproject.toml` carries the same strictness flags, marker list, and warning
@@ -226,7 +226,7 @@ invocation spanning two or more packages, reads the **root** block.
 No package's `tests/`, `tests/unit/`, or `tests/integration/` has an
 `__init__.py`, and none should be added. An `__init__.py` there makes the
 directory a real Python package, so every test module's importable name becomes
-`tests.unit.<basename>` - shared across all seven packages.
+`tests.unit.<basename>` - shared across all six packages.
 `foundry-agent-core` and `foundry-strands-agent` both have a `test_types.py`, and
 with a shared package path the first one collected wins the `sys.modules` slot,
 so the second is never imported and the first is collected a second time in its
@@ -289,7 +289,7 @@ gated four ways:
   to that package (`bandit -c ../../pyproject.toml -r src -t
   B602,B603,B605,B607`), so `just lint` / `just check` from inside
   `packages/<pkg>/` is gated identically to the root
-- `ci.yml` (PR-to-develop) and `release.yml` (PR-to-main) run that same bandit
+- `release.yml` (PR-to-main) run that same bandit
   set independently, so it is enforced even if a developer skips `just lint`
 
 `bandit`'s broader rule set is configured under `[tool.bandit]` for

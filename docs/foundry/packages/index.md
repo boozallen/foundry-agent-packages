@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Packages
 
-Seven independently versioned packages live under [`packages/`](../../../packages/). Each ships
+Six independently versioned packages live under [`packages/`](../../../packages/). Each ships
 its own wheel and CHANGELOG; consumers pick the subset they need.
 
 The open-source copy of this repository can lag behind this page. Any package

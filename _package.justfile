@@ -9,7 +9,7 @@
 # recipe declares `set allow-duplicate-recipes := true` in its own justfile and
 # redefines it there; the local definition wins.
 
-# All seven packages share one workspace `.venv`. Sync and run commands use
+# All six packages share one workspace `.venv`. Sync and run commands use
 # `--all-packages --all-groups` so root and package-local recipes install the
 # same development dependencies, including dependencies declared by members.
 
