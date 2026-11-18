@@ -289,7 +289,7 @@ gated four ways:
   to that package (`bandit -c ../../pyproject.toml -r src -t
   B602,B603,B605,B607`), so `just lint` / `just check` from inside
   `packages/<pkg>/` is gated identically to the root
-- `release.yml` (PR-to-main) run that same bandit
+- `release.yml` (PR-to-main) runs that same bandit
   set independently, so it is enforced even if a developer skips `just lint`
 
 `bandit`'s broader rule set is configured under `[tool.bandit]` for
