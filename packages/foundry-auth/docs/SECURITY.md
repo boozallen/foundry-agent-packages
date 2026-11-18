@@ -49,7 +49,7 @@ Maintain completely separate credentials for each environment:
 | Staging | Staging IdP | `foundry-staging` | SQLite (staging) |
 | Production | Production IdP | `foundry-prod` | SQLite (production) |
 
-> **Note:** SQLite session storage does not support multiple replicas sharing one database. Run a single replica per session database.
+> **Note:** SQLite session storage does not support multiple replicas sharing one database. Run a single replica per session database. Running more than one replica needs a shared session store such as Redis, which this package does not support yet.
 
 Never reuse client secrets, database credentials, or signing keys across environments.
 
