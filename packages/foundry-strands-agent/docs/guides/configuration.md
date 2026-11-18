@@ -9,7 +9,7 @@ for tools, sessions, and observability.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `provider` | `str` | `"bedrock"` | Inference provider. One of: `bedrock`, `ollama`, `llamacpp`, `nims`. |
-| `model_id` | `str` | `"us.anthropic.claude-sonnet-4-20250514-v1:0"` | Model identifier passed to the provider. |
+| `model_id` | `str` | `"us.anthropic.claude-haiku-5-5"` | Model identifier passed to the provider. |
 | `ollama_url` | `str \| None` | `None` | Base URL for Ollama. Required when `provider = "ollama"`. |
 | `llamacpp_url` | `str \| None` | `None` | Base URL for LlamaCpp server. Required when `provider = "llamacpp"`. |
 | `nims_base_url` | `str \| None` | `None` | Base URL for a NIMS or OpenAI-compatible endpoint. Required when `provider = "nims"`. |
@@ -101,7 +101,7 @@ from foundry_strands_agent import StrandsAgentConfig, AgentModelConfig
 config = StrandsAgentConfig(
     model=AgentModelConfig(
         provider="bedrock",
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="us.anthropic.claude-haiku-5-5",
         region_name="us-east-1",
     )
 )
@@ -155,9 +155,8 @@ Create a `config.yaml`:
 ```yaml
 model:
   provider: bedrock
-  model_id: us.anthropic.claude-sonnet-4-20250514-v1:0
+  model_id: us.anthropic.claude-haiku-5-5
   region_name: us-east-1
-  temperature: 0.5
   streaming: true
 
 agent_name: my-production-agent

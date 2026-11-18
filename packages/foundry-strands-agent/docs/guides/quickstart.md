@@ -14,7 +14,7 @@ Get a Strands agent running end-to-end in under five minutes.
     ```
 - **`SESSION_ENCRYPTION_KEY`** — every example below passes a `session_id`,
   which defaults chat history to file-backed storage (encrypted at rest, AES-256-GCM,
-  under `$TMPDIR/strands/sessions/` unless `session_storage_dir` is set). A
+  under `~/.strands/sessions/` unless `session_storage_dir` is set). A
   64-character hex string (32 bytes):
   ```bash
   export SESSION_ENCRYPTION_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
@@ -23,7 +23,7 @@ Get a Strands agent running end-to-end in under five minutes.
   later run raises `cryptography.exceptions.InvalidTag` when decrypting a
   session file an earlier run already wrote under the same `session_id` with
   the old key. Recover either by exporting the same key again or by deleting
-  the stale file under `$TMPDIR/strands/sessions/`.
+  the stale file under `~/.strands/sessions/`.
 
 ## Install
 
@@ -50,7 +50,7 @@ from foundry_strands_agent import (
 from foundry_agent_core import AgentRequest
 
 async def main():
-    config = StrandsAgentConfig()  # provider: bedrock, model: claude-sonnet-4
+    config = StrandsAgentConfig()  # provider: bedrock, model: claude-haiku-5-5
     container = create_default_container(config)
 
     service = create_agent_service(container)

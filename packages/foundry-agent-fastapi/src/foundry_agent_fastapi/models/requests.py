@@ -6,12 +6,18 @@ Implements API request models with HTTP-specific validation concerns,
 OpenAPI documentation, and clean separation from domain models.
 """
 
-import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from foundry_agent_core import _MAX_DICT_BYTES, _MAX_DICT_KEY_LEN, _MAX_DICT_KEYS, _MAX_QUERY_LEN, _MAX_RESULTS
+from foundry_agent_core import (
+    _MAX_DICT_BYTES,
+    _MAX_DICT_KEY_LEN,
+    _MAX_DICT_KEYS,
+    _MAX_QUERY_LEN,
+    _MAX_RESULTS,
+    validate_bounded_dict,
+)
 
 _MAX_SESSION_ID_LEN = 128
 _MAX_CONTEXT_KEYS = _MAX_DICT_KEYS
@@ -132,26 +138,13 @@ class QueryAPIRequest(BaseModel):
             Validated context dictionary or None
 
         Raises:
-            ValueError: If context is not JSON-serializable
+            ValueError: If context isn't a dict, has a non-string key, isn't
+                JSON-serializable, or exceeds a bound
         """
-        if v is None:
-            return None
-
-        if not isinstance(v, dict):
-            raise ValueError("Context must be a dictionary")
-
-        # Validate that all keys are strings (required for JSON)
-        for key in v.keys():
-            if not isinstance(key, str):
-                raise ValueError("All context keys must be strings")
-            if len(key) > _MAX_CONTEXT_KEY_LEN:
-                raise ValueError(f"Context key exceeds {_MAX_CONTEXT_KEY_LEN} characters")
-
-        if len(v) > _MAX_CONTEXT_KEYS:
-            raise ValueError(f"Context exceeds {_MAX_CONTEXT_KEYS} top-level keys")
-
-        serialized_size = len(json.dumps(v, default=str))
-        if serialized_size > _MAX_CONTEXT_BYTES:
-            raise ValueError(f"Context serializes above {_MAX_CONTEXT_BYTES} bytes")
-
-        return v
+        return validate_bounded_dict(
+            v,
+            max_keys=_MAX_CONTEXT_KEYS,
+            max_key_len=_MAX_CONTEXT_KEY_LEN,
+            max_bytes=_MAX_CONTEXT_BYTES,
+            label="Context",
+        )

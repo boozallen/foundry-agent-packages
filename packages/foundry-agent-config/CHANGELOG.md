@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.1.0 - 2026-11-18
+
+### Features
+
+- Support for Python 3.11 and 3.12
+
+### Fixes
+
+- remove stale alpha status from docs and package metadata
+
+### Maintenance
+
+- Security and maintenance updates (4)
+- standardize per-package testing practices
+- standardize pytest config across packages
+- Packaging and dependency updates
+
 ## [1.0.0] - 2026-06-29
 
 Initial public release.

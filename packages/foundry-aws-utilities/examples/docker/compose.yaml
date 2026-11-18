@@ -1,0 +1,68 @@
+services:
+  # LocalStack DynamoDB for local development
+  dynamodb-local:
+    container_name: dynamodb-local
+    image: localstack/localstack:3.0
+    ports:
+      - "4566:4566"        # LocalStack main endpoint
+      - "8001:8000"        # DynamoDB endpoint (for direct access)
+    networks:
+      - research-network
+    environment:
+      # LocalStack configuration
+      - SERVICES=dynamodb
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - LOCALSTACK_HOST=localhost
+      # AWS credentials for LocalStack
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./localstack-data:/var/lib/localstack"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # DynamoDB MCP Server
+  foundry-aws-utilities-mcp-server:
+    container_name: foundry-aws-utilities-mcp-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9003:8000"        # MCP server port (maps to localhost:9003)
+    networks:
+      - research-network
+    environment:
+      # AWS credentials for DynamoDB
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://dynamodb-local:4566
+      # DynamoDB table configuration
+      - DYNAMODB_TABLE_NAME=strands-storage
+      # uv configuration for local development
+      - UV_EXTRA_INDEX_URL=${UV_EXTRA_INDEX_URL:-}
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+networks:
+  research-network:
+    name: research-network
+
+volumes:
+  localstack-data:
+    driver: local

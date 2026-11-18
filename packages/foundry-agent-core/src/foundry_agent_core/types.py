@@ -9,17 +9,13 @@ from pydantic import BaseModel, Field, StringConstraints, field_serializer, fiel
 
 from foundry_agent_core.masking import mask_session_id
 
-# Field bounds (STIG V-222612 / CCI-002824). See
-# openspec/changes/archive/2026-06-18-foundry-586-add-pydantic-size-constraints/design.md D1
-# for the original rationale,
-# openspec/changes/foundry-783-raise-query-context-limits/design.md for the rationale
-# behind raising _MAX_QUERY_LEN/_MAX_DICT_BYTES to accommodate frontier model context
-# windows, and
-# openspec/changes/foundry-856-consolidate-bound-constants/design.md for why these
-# constants are re-exported from foundry_agent_core's package root (see __init__.py's
-# __all__) rather than only module-private: downstream packages import from there
-# instead of re-declaring their own literals, so raising a bound here takes effect
-# at every layer that checks it.
+# Field bounds (STIG V-222612 / CCI-002824): every request and response field has a
+# size limit, so oversized values fail Pydantic validation.
+# _MAX_QUERY_LEN/_MAX_DICT_BYTES were later raised to
+# accommodate frontier model context windows. These constants are re-exported from
+# foundry_agent_core's package root (see __init__.py's __all__) rather than only
+# module-private: downstream packages import from there instead of re-declaring their
+# own literals, so raising a bound here takes effect at every layer that checks it.
 _MAX_QUERY_LEN = 2_097_152  # 2 MiB (~524K tokens at ~4:1 char:token ratio)
 _MAX_CONTENT_LEN = 524_288  # 4 * max_tokens ceiling (131,072) at ~4:1 char:token ratio
 _MAX_SESSION_ID_LEN = 128
@@ -38,17 +34,54 @@ _BoundedSessionId = Annotated[
 ]
 
 
-def _validate_bounded_dict(value: dict[str, Any] | None) -> dict[str, Any] | None:
+def _json_utf8_size(value: Any) -> int:
+    r"""Return the UTF-8 byte size of ``value``'s JSON form, as the byte caps measure it.
+
+    Encodes the ``ensure_ascii=False`` JSON form, so non-ASCII text counts its real bytes
+    rather than ``\uXXXX`` escapes. ``default=str`` stringifies values JSON can't encode, and
+    ``surrogatepass`` sizes a lone surrogate (which JSON input can carry) instead of failing.
+    """
+    return len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8", "surrogatepass"))
+
+
+def validate_bounded_dict(
+    value: object,
+    *,
+    max_keys: int = _MAX_DICT_KEYS,
+    max_key_len: int = _MAX_DICT_KEY_LEN,
+    max_bytes: int = _MAX_DICT_BYTES,
+    label: str = "dict",
+) -> dict[str, Any] | None:
+    """Bound a dict's top-level key count, key length, and UTF-8 JSON size (STIG V-222612).
+
+    The size is measured with :func:`_json_utf8_size`.
+
+    Raises:
+        ValueError: If ``value`` isn't a dict, a key isn't a string, the dict isn't
+            JSON-serializable, or a bound is exceeded. Messages start with ``label``.
+    """
     if value is None:
         return None
-    if len(value) > _MAX_DICT_KEYS:
-        raise ValueError(f"dict exceeds {_MAX_DICT_KEYS} top-level keys")
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a dictionary")
+    if len(value) > max_keys:
+        raise ValueError(f"{label} exceeds {max_keys} top-level keys")
     for key in value:
-        if len(key) > _MAX_DICT_KEY_LEN:
-            raise ValueError(f"dict key exceeds {_MAX_DICT_KEY_LEN} characters")
-    if len(json.dumps(value, default=str)) > _MAX_DICT_BYTES:
-        raise ValueError(f"dict serializes above {_MAX_DICT_BYTES} bytes")
+        if not isinstance(key, str):
+            raise ValueError(f"{label} keys must be strings")
+        if len(key) > max_key_len:
+            raise ValueError(f"{label} key exceeds {max_key_len} characters")
+    try:
+        size = _json_utf8_size(value)
+    except (TypeError, ValueError, RecursionError) as e:
+        raise ValueError(f"{label} is not JSON-serializable") from e
+    if size > max_bytes:
+        raise ValueError(f"{label} serializes above {max_bytes} bytes")
     return value
+
+
+# Private name kept as an alias for existing importers; use validate_bounded_dict.
+_validate_bounded_dict = validate_bounded_dict
 
 
 class AgentRequest(BaseModel):
@@ -79,7 +112,7 @@ class AgentRequest(BaseModel):
     @field_validator("context", mode="after")
     @classmethod
     def _validate_context_bounds(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        return _validate_bounded_dict(v)
+        return validate_bounded_dict(v)
 
 
 class AgentResponse(BaseModel):
@@ -111,7 +144,7 @@ class AgentResponse(BaseModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _validate_metadata_bounds(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        return _validate_bounded_dict(v)
+        return validate_bounded_dict(v)
 
 
 # Type aliases for common patterns

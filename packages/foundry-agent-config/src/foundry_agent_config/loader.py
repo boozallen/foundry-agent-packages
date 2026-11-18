@@ -5,12 +5,16 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
 import yaml
 from pydantic import BaseModel, ValidationError
 
 from foundry_agent_config.exceptions import ConfigurationError
+
+# Bound TypeVar rather than a PEP 695 `def load_config[T: BaseModel]` generic, so this
+# package stays importable on Python 3.11 (PEP 695 syntax requires 3.12+).
+T = TypeVar("T", bound=BaseModel)
 
 _MAX_YAML_FILE_BYTES = 1_048_576  # 1 MiB
 _MAX_ENV_OVERRIDES = 512
@@ -21,7 +25,7 @@ _MAX_JSON_LIST_ITEMS = 256
 _MAX_JSON_DICT_KEYS = 256
 
 
-def load_config[T: BaseModel](
+def load_config(
     config_class: type[T],
     yaml_path: Path,
     env_prefix: str = "",

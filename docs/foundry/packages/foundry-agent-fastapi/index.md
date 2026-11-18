@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
 Reusable FastAPI middleware, health-check endpoint, API models, and
-mappers for agent services built on `foundry-agent-core`. Provides CORS,
+mappers for agent services built on [`foundry-agent-core`](../foundry-agent-core/index.md). Provides CORS,
 error handling, and request logging with correlation-ID tracking; maps
 HTTP DTOs to and from domain types.
 
@@ -13,7 +13,7 @@ HTTP DTOs to and from domain types.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+See [Adopting these packages](../../releases/adopting.md) for
 the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -67,7 +67,7 @@ return HTTP 422 (DISA STIG V-222609).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-fastapi/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-fastapi/CHANGELOG.md)
-- [Source](https://github.com/boozallen/foundry-agent-packages/tree/develop/packages/foundry-agent-fastapi)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
+- [README](../../../../packages/foundry-agent-fastapi/README.md)
+- [Changelog](../../../../packages/foundry-agent-fastapi/CHANGELOG.md)
+- [Source](../../../../packages/foundry-agent-fastapi/)
+- [License (Apache-2.0)](../../../../LICENSE)

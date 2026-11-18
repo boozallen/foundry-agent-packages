@@ -1,0 +1,40 @@
+# DynamoDB MCP Server Docker Example
+# Installs foundry-aws-utilities from a hosted package index, following the
+# adopter flow: download the wheel from a
+# foundry-agent-packages GitHub Release, host it in your own index, and pin
+# against that index below (replace "my-index" with your actual index).
+
+[project]
+name = "foundry-dynamodb-mcp-docker"
+version = "1.0.0"
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
+description = "Docker example for the DynamoDB MCP Server built on foundry-aws-utilities"
+requires-python = ">=3.13"
+
+# Core dependencies for the MCP server
+dependencies = [
+    "foundry-aws-utilities",
+    "fastmcp>=0.9.0",
+    "boto3>=1.34.0",
+]
+
+# Development dependencies for local testing
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
+
+[[tool.uv.index]]
+name = "my-index"
+url = "https://<your-index>/simple"
+explicit = true
+
+[tool.uv.sources]
+foundry-aws-utilities = { index = "my-index" }
+
+# uv configuration for performance and reliability
+[tool.uv]
+compile-bytecode = true
+link-mode = "copy"

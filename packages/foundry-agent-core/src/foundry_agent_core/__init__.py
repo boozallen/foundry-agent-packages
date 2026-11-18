@@ -41,14 +41,16 @@ from foundry_agent_core.types import (
     _MAX_RESULTS,
     AgentRequest,
     AgentResponse,
+    validate_bounded_dict,
 )
 
 __all__ = [
     # Core types
     "AgentRequest",
     "AgentResponse",
-    # Bound constants (STIG V-222612 / CCI-002824) — canonical source; see
-    # openspec/changes/foundry-856-consolidate-bound-constants/design.md
+    # Bound validator (STIG V-222612 / CCI-002824)
+    "validate_bounded_dict",
+    # Bound constants (STIG V-222612 / CCI-002824) — canonical source
     "_MAX_CONTENT_LEN",
     "_MAX_DICT_BYTES",
     "_MAX_DICT_KEY_LEN",

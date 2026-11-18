@@ -14,10 +14,9 @@ and clear API boundaries matter.
 
 The repo provides:
 
-- Four independently versioned packages under `packages/`
+- Six independently versioned packages under `packages/`
 - A shared workspace `pyproject.toml` with cross-cutting tooling
   (ruff, basedpyright, bandit, vulture, deptry, pytest)
-- Per-package security checklists tracked in `packages/<pkg>/security/`
 - Release tooling that builds wheels + SBOM + scan reports per package
   and attaches them to GitHub Releases (no public PyPI yet - adopters
   host the wheels in their own internal index)
@@ -46,11 +45,14 @@ just test            # unit + integration tiers, looped per package
 │              foundry-agent-* Packages (this repo)           │
 ├────────────────────────────────────────────────────────────┤
 │  foundry-agent-core   ◄── foundry-agent-fastapi             │
-│        ▲                                                    │
-│        │                                                    │
+│        ▲          ▲                                         │
+│        │          └──────────────── foundry-auth            │
 │        ├──────────────────── foundry-strands-agent          │
 │        │                            ▲                       │
+│        │                            │                       │
 │  foundry-agent-config ──────────────┘                       │
+│                                                              │
+│  foundry-aws-utilities (standalone - no dependents here)    │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,6 +64,8 @@ just test            # unit + integration tiers, looped per package
 | `foundry-agent-config` | YAML loader with env-var overrides (double-underscore nesting), bounded input controls | _(none)_ |
 | `foundry-agent-fastapi` | CORS / error / logging middleware, request/response models, mappers, health router | `foundry-agent-core` |
 | `foundry-strands-agent` | AWS Strands SDK adapter - `StrandsAgentBackend`, factory, orchestrator, tool loader, chat historian | `foundry-agent-core`, `foundry-agent-config` |
+| `foundry-aws-utilities` | DynamoDB, S3, and Bedrock Knowledge Base MCP servers | _(none)_ |
+| `foundry-auth` | OIDC authentication - authorization-code + PKCE flow, session storage (SQLite), FastAPI router factory, auth dependencies, WebSocket session validation | `foundry-agent-core` |
 
 ## File Structure
 
@@ -75,11 +79,13 @@ foundry-agent-packages/
 │   │   └── pyproject.toml
 │   ├── foundry-agent-config/
 │   ├── foundry-agent-fastapi/
-│   └── foundry-strands-agent/
+│   ├── foundry-strands-agent/
+│   ├── foundry-aws-utilities/
+│   ├── foundry-auth/
 ├── docs/                       # cross-cutting docs (release model, dev setup)
 ├── openspec/                   # spec-driven workflow (optional)
 ├── scripts/bump_version.py     # per-package version bumper
-├── .github/                    # issue/PR templates, dependabot.yml, release workflow
+├── .github/workflows/          # release.yml
 ├── pyproject.toml              # workspace root, shared tooling config
 └── justfile                    # developer commands
 ```
@@ -156,12 +162,12 @@ HTML coverage is **always on**, never a recipe: each package's `addopts` carries
 per-package runs write to distinct directories instead of overwriting one flat
 `htmlcov/`. There is no `test-cov` recipe; it was a second name for `just test`.
 
-Each of the four packages also has its own local `justfile`
+Each of the six packages also has its own local `justfile`
 (`packages/<pkg>/justfile`) scoped to just that package - running `just test`
 from inside a package directory intercepts there and tests only that package,
 not the whole workspace.
 
-Those four files are **stubs**: each one imports the workspace-root
+Those six files are **stubs**: each one imports the workspace-root
 `_package.justfile`, which is the single definition of the shared per-package
 recipe set (`sync`, `lint`, `lint-fix`, `format`, `format-fix`, `type-check`,
 `test`, `test-unit`, `test-integration`, `check`) plus a local `default` that
@@ -185,14 +191,26 @@ settings when run from inside the package on a cold clone. Each package's
 `pyproject.toml` gates coverage via `--cov-fail-under=70` on the pytest
 invocation itself (not only via `[tool.coverage.report] fail_under`).
 
-All four packages' `[tool.pytest.ini_options]` blocks are identical apart from
-the two module-keyed paths (`--cov=src/<module>` and
+The five packages other than `foundry-aws-utilities` and `foundry-auth` have
+identical `[tool.pytest.ini_options]` blocks apart from the two module-keyed
+paths (`--cov=src/<module>` and
 `--cov-report=html:htmlcov/<module>`): the same remaining `addopts` (including
 `--strict-markers`, so an undeclared/typo'd marker is an error rather than a
 silent no-op, and `--strict-config`, so an unknown ini key is an error rather than
 a silently ignored line), the same one-entry `markers` list, and the same
-narrow `filterwarnings` list. None of them carries `-m`. Keep them that way -
-change all four together. The
+narrow `filterwarnings` list. None of them carries `-m`. Keep those five's
+blocks identical - change them together. `foundry-aws-utilities` shares the
+same `addopts` flags and the absence of `-m`, but declares extra trait-tag
+markers (`unit`, `slow`, `network`, `aws`) and a broader `filterwarnings` list,
+since its dependencies (`boto3`/`botocore`) emit deprecation noise the other
+five don't. `foundry-auth` declares only the single `integration` marker like
+the five identical packages, but carries its own narrow `filterwarnings` list
+(`starlette`'s `StarletteDeprecationWarning` and a `DeprecationWarning` from
+`starlette.testclient`, surfaced by FastAPI's `TestClient` in its
+router/websocket tests) rather than either existing template's list verbatim -
+the shared invariant across all six is `--strict-markers
+--strict-config` with no `-m`, not byte-identical `markers`/`filterwarnings`.
+The
 root `pyproject.toml` carries the same strictness flags, marker list, and warning
 filters so a bare root `uv run pytest` is gated the same way; it deliberately
 carries no coverage flags, since a root-level `--cov=src/<module>` would resolve
@@ -208,7 +226,7 @@ invocation spanning two or more packages, reads the **root** block.
 No package's `tests/`, `tests/unit/`, or `tests/integration/` has an
 `__init__.py`, and none should be added. An `__init__.py` there makes the
 directory a real Python package, so every test module's importable name becomes
-`tests.unit.<basename>` - shared across all four packages.
+`tests.unit.<basename>` - shared across all six packages.
 `foundry-agent-core` and `foundry-strands-agent` both have a `test_types.py`, and
 with a shared package path the first one collected wins the `sys.modules` slot,
 so the second is never imported and the first is collected a second time in its
@@ -252,28 +270,27 @@ Supply-chain floors live in root `pyproject.toml` under
 
 For larger work where a written proposal helps:
 
-- `openspec/specs/` documents the per-capability specs that exist today
+- `openspec/specs/` documents the per-capability specs
 - `openspec/changes/` is where new proposals live
-- See `openspec/AGENTS.md` and `openspec/config.yaml` for orientation
+- See `openspec/config.yaml` for orientation
 
 Small or exploratory changes don't need a spec - go straight to code.
 
 ## Security posture
 
-When a change touches an auth, authz, crypto, audit-logging, session-
-handling, data-handling, or input-validation surface, call that out
-explicitly in the PR description.
-
-**Security policy: command injection.** This is gated three ways:
+**Security policy: command injection.** STIG V-222604 (CCI-001310) is
+gated four ways:
 
 - `ruff` extend-select includes `S102`, `S307`, `S602-S607`
 - `just lint` and `just lint-pkg <name>` additionally run
-  `bandit -c pyproject.toml -r packages -t B602,B603,B605,B607` (narrow sink
-  set)
+  `bandit -c pyproject.toml -r packages -t B602,B603,B605,B607` (narrow STIG
+  sink set), so the local gate exercises the same sinks CI does
 - the per-package `lint` in `_package.justfile` runs the same narrow set scoped
   to that package (`bandit -c ../../pyproject.toml -r src -t
   B602,B603,B605,B607`), so `just lint` / `just check` from inside
   `packages/<pkg>/` is gated identically to the root
+- `release.yml` (PR-to-main) runs that same bandit
+  set independently, so it is enforced even if a developer skips `just lint`
 
 `bandit`'s broader rule set is configured under `[tool.bandit]` for
 ad-hoc local runs but is not gated in CI. `vulture` and `deptry` are
@@ -290,10 +307,6 @@ in their own internal index** (no public PyPI yet).
 - Tag a release on `main` → builds wheels + Syft SBOM + Grype scan per
   changed package and attaches them to the GitHub Release
 
-See `docs/foundry/releases/release-channels.md` for the internal RC/dev
-publishing model and `docs/foundry/releases/adopting.md` for the
-GitHub-Release adopter flow.
-
 ## Python Style
 
 - Modern PEP 585: `list[int]`, `dict[str, Any]`, `X | Y | None`
@@ -306,7 +319,7 @@ GitHub-Release adopter flow.
 - `tool_loader.py` and `_tool_factory.py` in `foundry-strands-agent`
   are security-critical: never restructure them as part of a drive-by
   cleanup
-- Python 3.13 floor (the 3.14 upgrade is a post-OSS task)
+- The workspace develops on Python 3.13; `foundry-agent-core` and `foundry-agent-config` ship a 3.11 floor so they install on Databricks runtimes — keep them free of 3.12+ syntax
 
 ## Commit Guidelines
 

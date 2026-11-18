@@ -7,7 +7,7 @@ sidebar_position: 1
 `foundry-agent-packages` ships releases as **GitHub Releases**. Each release
 attaches one wheel per changed package, a Syft SBOM, and a Grype vulnerability
 scan. There is no public PyPI mirror yet — host the wheel in your own index
-and point `uv` / `pip` at it.
+and point [`uv`](https://docs.astral.sh/uv/) / `pip` at it.
 
 This page covers the adopter-facing flow: download the artifacts, host them,
 consume them.
@@ -20,7 +20,7 @@ includes:
 
 - **Wheels:** one `foundry_agent_<pkg>-<version>-py3-none-any.whl` per
   package that changed at that tag (so a typical release attaches 1–4
-  wheels, not always all four)
+  wheels, not always one for every package)
 - **SBOM:** `foundry-agent-<pkg>-sbom.json` (one per wheel)
 - **Scan report:** `foundry-agent-<pkg>-grype.json` (one per wheel, when present)
 
@@ -65,8 +65,13 @@ foundry-strands-agent = { index = "my-index" }
 ```
 
 ```bash
-uv add foundry-agent-core foundry-strands-agent
+uv add foundry-agent-core foundry-agent-config foundry-strands-agent
 ```
+
+[`foundry-agent-config`](../packages/foundry-agent-config/index.md) is listed even though [`foundry-strands-agent`](../packages/foundry-strands-agent/index.md) pulls it
+in: uv applies `[tool.uv.sources]` only to a project's direct dependencies, so
+with an `explicit = true` index a transitive dependency would be looked up on
+PyPI instead, where it isn't published.
 
 ## 4. Verify what you're installing
 
@@ -86,22 +91,21 @@ describe the exact bits in the artifact — not a separately-resolved view.
 
 - **Watch the repo** for releases — GitHub will email new tags to watchers.
 - **Pin against your own index**, not against `develop` or any moving ref
-  here. Pre-release channels (`rcN`, `.devN`) documented in
-  [release-channels.md](./release-channels.md) are for internal validation
+  here. Pre-release channels (`rcN`, `.devN`) are for internal validation
   cycles and are not part of the OSS adoption flow.
 - **Read the relevant package CHANGELOG** at upgrade time. The root
-  [`CHANGELOG.md`](https://github.com/boozallen/foundry-agent-packages/blob/develop/CHANGELOG.md)
+  [`CHANGELOG.md`](../../../CHANGELOG.md)
   cross-references each package's per-package changelog under
   `packages/<pkg>/CHANGELOG.md`.
 
 ## When to file an issue
 
-- The wheel installs but imports fail → file an issue with the `pip`/`uv`
+- The wheel installs but imports fail → [file an issue](https://github.com/boozallen/foundry-agent-packages/issues) with the `pip`/`uv`
   resolution output and the Python version
 - The SBOM or scan asset is missing for a release → file an issue
 - A CVE you care about is unresolved in the scan → file an issue with the
   CVE ID, the affected package version, and your remediation deadline
 
 Security advisories should go through the private flow described in
-[`SECURITY.md`](https://github.com/boozallen/foundry-agent-packages/blob/develop/SECURITY.md),
+[`SECURITY.md`](../../../SECURITY.md),
 not the public issue tracker.

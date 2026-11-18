@@ -38,6 +38,11 @@ config = StrandsAgentConfig(
 `session_s3_bucket` is required when `session_type = "s3"`.  AWS credentials
 are resolved from the standard credential chain.
 
+Listing S3 sessions with `get_chat_sessions_history()` uses `s3:ListBucket`
+on the bucket and prefix (the same permission the S3 session manager already
+uses to list messages and delete sessions) and makes one GET per session.
+Without it, listing raises an error instead of returning an empty list.
+
 ### Reading Session History
 
 `ChatHistorian` implements the `ChatHistoryManager` protocol and exposes

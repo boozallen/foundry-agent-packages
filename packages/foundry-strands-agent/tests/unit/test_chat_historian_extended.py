@@ -3,13 +3,19 @@
 """Extended tests for ChatHistorian to improve coverage."""
 
 import json
-from unittest.mock import MagicMock, patch
+import logging
+import secrets
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from botocore.exceptions import ClientError
+from strands.session import FileSessionManager
 from strands.types.session import Session, SessionType
 
-from foundry_agent_core import QueryProcessingError
-from foundry_strands_agent.chat_historian import ChatHistorian, _SessionFrom
+from foundry_agent_core import QueryProcessingError, mask_session_id
+from foundry_strands_agent.chat_historian import ChatHistorian
+from foundry_strands_agent.encrypted_session import EncryptedFileSessionManager
 
 
 @pytest.fixture
@@ -28,99 +34,18 @@ def historian(mock_agent_factory, mock_config):
     return ChatHistorian(agent_factory=mock_agent_factory, config=mock_config)
 
 
-class TestSessionFrom:
-    """Test _SessionFrom utility class."""
+def _write_session(storage: Path, session_id: str, updated_at: str | None = None) -> None:
+    """Write a plaintext session.json the way FileSessionManager lays it out."""
+    session_dir = storage / f"session_{session_id}"
+    session_dir.mkdir()
+    data = {"session_id": session_id, "session_type": "AGENT", "created_at": "2026-01-01T00:00:00Z"}
+    if updated_at:
+        data["updated_at"] = updated_at
+    (session_dir / "session.json").write_text(json.dumps(data))
 
-    def test_dict_from_str_valid_json(self):
-        """Test parsing valid session JSON string."""
-        session_str = '{"session_id": "test-123", "name": "Test Session"}'
-        result = _SessionFrom.dict_from_str(session_str)
 
-        assert result is not None
-        assert result["session_id"] == "test-123"
-        assert result["name"] == "Test Session"
-
-    def test_dict_from_str_invalid_json(self):
-        """Test parsing invalid JSON string."""
-        session_str = "{invalid json"
-        result = _SessionFrom.dict_from_str(session_str)
-
-        assert result is None
-
-    def test_dict_from_str_missing_session_id(self):
-        """Test parsing JSON without session_id."""
-        session_str = '{"name": "Test Session"}'
-        result = _SessionFrom.dict_from_str(session_str)
-
-        assert result is None
-
-    def test_dict_from_str_empty_string(self):
-        """Test parsing empty string."""
-        result = _SessionFrom.dict_from_str("")
-        assert result is None
-
-    def test_dict_from_str_not_dict(self):
-        """Test parsing JSON that's not a dict."""
-        session_str = '["not", "a", "dict"]'
-        result = _SessionFrom.dict_from_str(session_str)
-        assert result is None
-
-    def test_json_dict_valid_session(self):
-        """Test creating Session from valid dict."""
-        session_dict = {
-            "session_id": "test-456",
-            "session_type": "AGENT",
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-01T01:00:00Z",
-        }
-        result = _SessionFrom.json_dict(session_dict)
-
-        assert result is not None
-        assert isinstance(result, Session)
-        assert result.session_id == "test-456"
-
-    def test_json_dict_missing_session_id(self):
-        """Test creating Session from dict without session_id."""
-        session_dict = {"name": "Test"}
-        result = _SessionFrom.json_dict(session_dict)
-
-        assert result is None
-
-    def test_json_dict_not_dict(self):
-        """Test creating Session from non-dict."""
-        result = _SessionFrom.json_dict("not a dict")
-        assert result is None
-
-    def test_json_dict_with_session_type_conversion(self):
-        """Test Session creation with session_type string conversion."""
-        session_dict = {
-            "session_id": "test-789",
-            "session_type": "AGENT",  # String that needs conversion
-            "created_at": "2026-01-01T00:00:00Z",
-        }
-        result = _SessionFrom.json_dict(session_dict)
-
-        assert result is not None
-        assert result.session_type == SessionType.AGENT
-
-    def test_session_str_valid(self):
-        """Test creating Session from JSON string."""
-        session_str = json.dumps(
-            {
-                "session_id": "test-str-123",
-                "session_type": "AGENT",
-                "created_at": "2026-01-01T00:00:00Z",
-            }
-        )
-        result = _SessionFrom.session_str(session_str)
-
-        assert result is not None
-        assert result.session_id == "test-str-123"
-
-    def test_session_str_invalid_json(self):
-        """Test creating Session from invalid JSON string."""
-        result = _SessionFrom.session_str("{invalid")
-        assert result is None
+def _historian_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == "foundry_strands_agent.chat_historian"]
 
 
 class TestGetChatSessionsHistoryFile:
@@ -151,189 +76,258 @@ class TestGetChatSessionsHistoryFile:
     @pytest.mark.asyncio
     async def test_file_storage_with_valid_sessions(self, historian, mock_agent_factory, tmp_path):
         """Test retrieving valid sessions from file storage."""
-        # Create session directories
-        session1_dir = tmp_path / "session_session1"
-        session1_dir.mkdir()
-        session1_meta = session1_dir / "session.json"
-        session1_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session1",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T02:00:00Z",
-                }
-            )
-        )
+        _write_session(tmp_path, "session1", "2026-01-01T02:00:00Z")
+        _write_session(tmp_path, "session2", "2026-01-01T01:00:00Z")
+        repo = FileSessionManager(session_id="session1", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        session2_dir = tmp_path / "session_session2"
-        session2_dir.mkdir()
-        session2_meta = session2_dir / "session.json"
-        session2_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session2",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T01:00:00Z",
-                }
-            )
-        )
-
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
-
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
-            result = await historian.get_chat_sessions_history()
+        result = await historian.get_chat_sessions_history()
 
         assert len(result) == 2
         # Should be sorted by updated_at descending
         assert result[0].session_id == "session1"  # More recent
         assert result[1].session_id == "session2"
+        assert all(s.session_type is SessionType.AGENT for s in result)
 
     @pytest.mark.asyncio
     async def test_file_storage_with_pagination(self, historian, mock_agent_factory, tmp_path):
         """Test pagination with file storage."""
-        # Create 3 sessions
         for i in range(3):
-            session_dir = tmp_path / f"session_session{i}"
-            session_dir.mkdir()
-            session_meta = session_dir / "session.json"
-            session_meta.write_text(
-                json.dumps(
-                    {
-                        "session_id": f"session{i}",
-                        "session_type": "AGENT",
-                        "created_at": "2026-01-01T00:00:00Z",
-                        "updated_at": f"2026-01-01T0{i}:00:00Z",
-                    }
-                )
-            )
+            _write_session(tmp_path, f"session{i}", f"2026-01-01T0{i}:00:00Z")
+        repo = FileSessionManager(session_id="session0", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
+        result = await historian.get_chat_sessions_history(limit=2, offset=1)
 
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
-            result = await historian.get_chat_sessions_history(limit=2, offset=1)
-
-        assert len(result) == 2
-        assert result[0].session_id == "session1"
+        assert [s.session_id for s in result] == ["session1", "session0"]
 
     @pytest.mark.asyncio
     async def test_file_storage_offset_beyond_results(self, historian, mock_agent_factory, tmp_path):
         """Test offset beyond available results."""
-        session_dir = tmp_path / "session_session1"
-        session_dir.mkdir()
-        session_meta = session_dir / "session.json"
-        session_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session1",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T00:00:00Z",
-                }
-            )
-        )
+        _write_session(tmp_path, "session1", "2026-01-01T00:00:00Z")
+        repo = FileSessionManager(session_id="session1", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
-
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
-            result = await historian.get_chat_sessions_history(offset=10)
+        result = await historian.get_chat_sessions_history(offset=10)
 
         assert result == []
 
     @pytest.mark.asyncio
     async def test_file_storage_skips_non_session_dirs(self, historian, mock_agent_factory, tmp_path):
         """Test that non-session directories are skipped."""
-        # Create a valid session
-        session_dir = tmp_path / "session_session1"
-        session_dir.mkdir()
-        session_meta = session_dir / "session.json"
-        session_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session1",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                }
-            )
-        )
+        _write_session(tmp_path, "session1")
+        (tmp_path / "other_dir").mkdir()
+        (tmp_path / "session_file.txt").write_text("not a session")
+        repo = FileSessionManager(session_id="session1", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        # Create a non-session directory
-        other_dir = tmp_path / "other_dir"
-        other_dir.mkdir()
-
-        # Create a file (not directory)
-        other_file = tmp_path / "session_file.txt"
-        other_file.write_text("not a session")
-
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
-
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
-            result = await historian.get_chat_sessions_history()
+        result = await historian.get_chat_sessions_history()
 
         assert len(result) == 1
         assert result[0].session_id == "session1"
 
     @pytest.mark.asyncio
-    async def test_file_storage_skips_invalid_session_json(self, historian, mock_agent_factory, tmp_path):
-        """Test that invalid session JSON files are skipped."""
-        # Valid session
-        session1_dir = tmp_path / "session_session1"
-        session1_dir.mkdir()
-        session1_meta = session1_dir / "session.json"
-        session1_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session1",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                }
-            )
+    async def test_file_storage_skips_invalid_session_json(self, historian, mock_agent_factory, tmp_path, caplog):
+        """Unreadable sessions are skipped with a warning that carries no raw ID or content."""
+        _write_session(tmp_path, "session1")
+        (tmp_path / "session_session2").mkdir()
+        (tmp_path / "session_session2" / "session.json").write_text('{"session_id": "session2", broken')
+        # Session dir without session.json is skipped silently.
+        (tmp_path / "session_session3").mkdir()
+        # A directory with an empty session ID ("session_") is skipped silently, as in S3 listing.
+        (tmp_path / "session_").mkdir()
+        (tmp_path / "session_" / "session.json").write_text(
+            json.dumps({"session_id": "orphan", "session_type": "AGENT", "created_at": "2026-01-01T00:00:00Z"})
         )
+        # Session metadata with an empty session_id is skipped silently.
+        (tmp_path / "session_session4").mkdir()
+        (tmp_path / "session_session4" / "session.json").write_text(
+            json.dumps({"session_id": "", "session_type": "AGENT", "created_at": "2026-01-01T00:00:00Z"})
+        )
+        repo = FileSessionManager(session_id="session1", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        # Invalid session (bad JSON)
-        session2_dir = tmp_path / "session_session2"
-        session2_dir.mkdir()
-        session2_meta = session2_dir / "session.json"
-        session2_meta.write_text("{invalid json")
-
-        # Session dir without session.json
-        session3_dir = tmp_path / "session_session3"
-        session3_dir.mkdir()
-
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
-
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
+        with caplog.at_level(logging.WARNING, logger="foundry_strands_agent.chat_historian"):
             result = await historian.get_chat_sessions_history()
 
-        assert len(result) == 1
-        assert result[0].session_id == "session1"
+        assert [s.session_id for s in result] == ["session1"]
+        records = _historian_records(caplog)
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert mask_session_id("session2") in message
+        assert "session2" not in message.replace(mask_session_id("session2"), "")
+        assert "broken" not in message
+
+
+class TestGetChatSessionsHistoryEncryptedFile:
+    """Encrypted file sessions are listed through the session manager, which decrypts them."""
+
+    @pytest.mark.asyncio
+    async def test_encrypted_sessions_are_listed_decrypted(self, historian, mock_agent_factory, tmp_path):
+        key = secrets.token_bytes(32)
+        for session_id in ("enc-a", "enc-b", "enc-c"):
+            EncryptedFileSessionManager(encryption_key=key, session_id=session_id, storage_dir=str(tmp_path))
+        # On disk the metadata is ciphertext, not parseable session JSON.
+        on_disk = json.loads((tmp_path / "session_enc-a" / "session.json").read_text())
+        assert "session_id" not in on_disk
+
+        repo = EncryptedFileSessionManager(encryption_key=key, session_id="enc-a", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
+
+        result = await historian.get_chat_sessions_history()
+
+        assert sorted(s.session_id for s in result) == ["enc-a", "enc-b", "enc-c"]
+        assert all(s.session_type is SessionType.AGENT for s in result)
+        updated = [s.updated_at for s in result]
+        assert updated == sorted(updated, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_session_encrypted_with_other_key_is_skipped(self, historian, mock_agent_factory, tmp_path, caplog):
+        EncryptedFileSessionManager(
+            encryption_key=secrets.token_bytes(32), session_id="other-key", storage_dir=str(tmp_path)
+        )
+        repo = EncryptedFileSessionManager(
+            encryption_key=secrets.token_bytes(32), session_id="this-key", storage_dir=str(tmp_path)
+        )
+        mock_agent_factory.create_session_repository.return_value = repo
+
+        with caplog.at_level(logging.WARNING, logger="foundry_strands_agent.chat_historian"):
+            result = await historian.get_chat_sessions_history()
+
+        assert [s.session_id for s in result] == ["this-key"]
+        records = _historian_records(caplog)
+        assert len(records) == 1
+        assert mask_session_id("other-key") in records[0].getMessage()
+        assert "other-key" not in records[0].getMessage()
+
+
+def _s3_repo(pages: list[dict], sessions: dict[str, Session | Exception | None], prefix: str = "") -> MagicMock:
+    """Stub an S3 session repository: a paginator over `pages` and a `read_session` lookup."""
+    repo = MagicMock()
+    delattr(repo, "storage_dir")  # Remove storage_dir so it's identified as S3
+    repo.bucket = "sessions-bucket"
+    repo.prefix = prefix
+    repo.client.get_paginator.return_value.paginate.return_value = pages
+
+    def read_session(session_id: str) -> Session | None:
+        value = sessions.get(session_id)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    repo.read_session.side_effect = read_session
+    return repo
+
+
+def _s3_session(session_id: str, updated_at: str) -> Session:
+    return Session.from_dict(
+        {"session_id": session_id, "session_type": "AGENT", "created_at": updated_at, "updated_at": updated_at}
+    )
 
 
 class TestGetChatSessionsHistoryS3:
     """Test S3-based session history retrieval."""
 
     @pytest.mark.asyncio
-    async def test_s3_storage_returns_empty(self, historian, mock_agent_factory):
-        """Test S3 storage (currently returns empty)."""
-        mock_repo = MagicMock()
-        mock_repo.client = MagicMock()  # Has client attribute, so it's S3
-        delattr(mock_repo, "storage_dir")  # Remove storage_dir so it's identified as S3
-        mock_agent_factory.create_session_repository.return_value = mock_repo
+    async def test_s3_lists_sessions_across_pages(self, historian, mock_agent_factory):
+        pages = [
+            {"CommonPrefixes": [{"Prefix": "session_s1/"}, {"Prefix": "session_s2/"}]},
+            {"CommonPrefixes": [{"Prefix": "session_s3/"}]},
+        ]
+        sessions = {
+            "s1": _s3_session("s1", "2026-01-01T01:00:00Z"),
+            "s2": _s3_session("s2", "2026-01-01T03:00:00Z"),
+            "s3": _s3_session("s3", "2026-01-01T02:00:00Z"),
+        }
+        repo = _s3_repo(pages, sessions)
+        mock_agent_factory.create_session_repository.return_value = repo
 
         result = await historian.get_chat_sessions_history()
 
-        assert result == []
+        assert [s.session_id for s in result] == ["s2", "s3", "s1"]
+        assert all(s.session_type is SessionType.AGENT for s in result)
+        repo.client.get_paginator.assert_called_once_with("list_objects_v2")
+        repo.client.get_paginator.return_value.paginate.assert_called_once_with(
+            Bucket="sessions-bucket", Prefix="session_", Delimiter="/"
+        )
+
+    @pytest.mark.asyncio
+    async def test_s3_paging_applies_after_sorting(self, historian, mock_agent_factory):
+        pages = [{"CommonPrefixes": [{"Prefix": f"session_s{i}/"} for i in range(3)]}]
+        sessions = {f"s{i}": _s3_session(f"s{i}", f"2026-01-01T0{i}:00:00Z") for i in range(3)}
+        mock_agent_factory.create_session_repository.return_value = _s3_repo(pages, sessions)
+
+        result = await historian.get_chat_sessions_history(limit=2, offset=1)
+
+        assert [s.session_id for s in result] == ["s1", "s0"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("prefix", ["tenant", "tenant/", "/tenant", "/tenant/"])
+    async def test_s3_uses_configured_prefix(self, historian, mock_agent_factory, prefix):
+        """The prefix is normalized the way S3SessionManager writes keys (slashes stripped)."""
+        pages = [{"CommonPrefixes": [{"Prefix": "tenant/session_s1/"}]}]
+        repo = _s3_repo(pages, {"s1": _s3_session("s1", "2026-01-01T00:00:00Z")}, prefix=prefix)
+        mock_agent_factory.create_session_repository.return_value = repo
+
+        result = await historian.get_chat_sessions_history()
+
+        assert [s.session_id for s in result] == ["s1"]
+        repo.client.get_paginator.return_value.paginate.assert_called_once_with(
+            Bucket="sessions-bucket", Prefix="tenant/session_", Delimiter="/"
+        )
+
+    @pytest.mark.asyncio
+    async def test_s3_skips_session_with_unknown_session_type(self, historian, mock_agent_factory, caplog):
+        unknown = _s3_session("unknown", "2026-01-01T01:00:00Z")
+        unknown.session_type = "NOT_A_TYPE"  # pyright: ignore[reportAttributeAccessIssue]
+        pages = [{"CommonPrefixes": [{"Prefix": "session_ok/"}, {"Prefix": "session_unknown/"}]}]
+        sessions = {"ok": _s3_session("ok", "2026-01-01T00:00:00Z"), "unknown": unknown}
+        mock_agent_factory.create_session_repository.return_value = _s3_repo(pages, sessions)
+
+        with caplog.at_level(logging.WARNING, logger="foundry_strands_agent.chat_historian"):
+            result = await historian.get_chat_sessions_history()
+
+        assert [s.session_id for s in result] == ["ok"]
+        records = _historian_records(caplog)
+        assert len(records) == 1
+        assert mask_session_id("unknown") in records[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_s3_skips_missing_and_unreadable_sessions(self, historian, mock_agent_factory, caplog):
+        pages = [
+            {"CommonPrefixes": [{"Prefix": "session_ok/"}, {"Prefix": "session_gone/"}, {"Prefix": "session_bad/"}]},
+            {"CommonPrefixes": [{"Prefix": "session_/"}]},  # An empty session ID is ignored
+            {},  # A page with no CommonPrefixes key
+        ]
+        sessions = {
+            "ok": _s3_session("ok", "2026-01-01T00:00:00Z"),
+            "gone": None,
+            "bad": Exception("S3 error reading session_bad/session.json"),
+        }
+        repo = _s3_repo(pages, sessions)
+        mock_agent_factory.create_session_repository.return_value = repo
+
+        with caplog.at_level(logging.WARNING, logger="foundry_strands_agent.chat_historian"):
+            result = await historian.get_chat_sessions_history()
+
+        assert [s.session_id for s in result] == ["ok"]
+        assert [c.args[0] for c in repo.read_session.call_args_list] == ["ok", "gone", "bad"]
+        records = _historian_records(caplog)
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert mask_session_id("bad") in message
+        assert "session_bad" not in message
+
+    @pytest.mark.asyncio
+    async def test_s3_listing_error_is_raised(self, historian, mock_agent_factory):
+        repo = _s3_repo([], {})
+        repo.client.get_paginator.return_value.paginate.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}, "ListObjectsV2"
+        )
+        mock_agent_factory.create_session_repository.return_value = repo
+
+        with pytest.raises(QueryProcessingError, match="Error retrieving chat sessions history"):
+            await historian.get_chat_sessions_history()
 
 
 class TestGetChatSessionsHistoryErrors:
@@ -378,25 +372,11 @@ class TestDefaultParameters:
     @pytest.mark.asyncio
     async def test_default_offset_is_zero(self, historian, mock_agent_factory, tmp_path):
         """Test that default offset is 0."""
-        session_dir = tmp_path / "session_session1"
-        session_dir.mkdir()
-        session_meta = session_dir / "session.json"
-        session_meta.write_text(
-            json.dumps(
-                {
-                    "session_id": "session1",
-                    "session_type": "AGENT",
-                    "created_at": "2026-01-01T00:00:00Z",
-                }
-            )
-        )
+        _write_session(tmp_path, "session1")
+        repo = FileSessionManager(session_id="session1", storage_dir=str(tmp_path))
+        mock_agent_factory.create_session_repository.return_value = repo
 
-        mock_repo = MagicMock()
-        mock_repo.storage_dir = str(tmp_path)
-        mock_agent_factory.create_session_repository.return_value = mock_repo
-
-        with patch("foundry_strands_agent.chat_historian.FILE_SESSION_PREFIX", "session"):
-            result = await historian.get_chat_sessions_history()
+        result = await historian.get_chat_sessions_history()
 
         # Should return the first session (offset=0)
         assert len(result) == 1

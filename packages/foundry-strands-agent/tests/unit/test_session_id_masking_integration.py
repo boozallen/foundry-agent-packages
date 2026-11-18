@@ -3,10 +3,11 @@
 """Integration tests for session-ID masking in the rewired strands classes.
 
 The masking *utility* now lives in ``foundry_agent_core`` and is unit-tested
-there (``foundry_agent_core/tests/test_masking.py``). These tests assert the
-*strands integration*: that the classes we rewired to import from core actually
-route ``session_id`` through masking at their log / serialization emission
-boundaries, so a raw identifier never reaches a log record (STIG V-222577).
+there (``packages/foundry-agent-core/tests/unit/test_masking.py``). These tests
+assert the *strands integration*: that the classes we rewired to import from core
+actually route ``session_id`` through masking at their log / serialization
+emission boundaries, so a raw identifier never reaches a log record (STIG
+V-222577).
 
 Each test drives the real class and inspects the emitted ``LogRecord`` (or
 serialized output) for the raw value. We deliberately do not re-test the hash
@@ -21,7 +22,7 @@ import pytest
 
 from foundry_agent_core import AgentRequest, AgentResponse, mask_session_id
 from foundry_strands_agent.backend import StrandsAgentBackend
-from foundry_strands_agent.chat_historian import _SessionFrom
+from foundry_strands_agent.chat_historian import ChatHistorian
 from foundry_strands_agent.lifecycle import ExecutionStrategy, RequestLifecycleManager
 from foundry_strands_agent.orchestrator import QueryOrchestrator
 from foundry_strands_agent.response_processor import DefaultResponseProcessor
@@ -84,26 +85,27 @@ class TestResponseProcessorMasking:
         assert RAW_SID not in caplog.text
 
 
-class TestChatHistorianRedaction:
-    """_SessionFrom must scrub session_id out of logged session blobs on error."""
+class TestChatHistorianListingMasking:
+    """ChatHistorian must mask session_id when it skips an unreadable session during listing."""
 
-    def test_dict_from_str_on_parse_failure_redacts_session_id_in_logs(self, caplog):
-        # Malformed JSON that still contains a raw session_id -> triggers the
-        # except branch which logs the (redacted) blob.
-        blob = '{"session_id": "' + RAW_SID + '", "oops": '
-        with caplog.at_level(logging.ERROR, logger="foundry_strands_agent.chat_historian"):
-            result = _SessionFrom.dict_from_str(blob)
+    @pytest.mark.asyncio
+    async def test_skipped_session_warning_masks_session_id(self, caplog):
+        repo = MagicMock()
+        delattr(repo, "storage_dir")
+        repo.bucket = "b"
+        repo.prefix = ""
+        repo.client.get_paginator.return_value.paginate.return_value = [
+            {"CommonPrefixes": [{"Prefix": f"session_{RAW_SID}/"}]}
+        ]
+        repo.read_session.side_effect = Exception(f"S3 error reading session_{RAW_SID}/session.json")
+        factory = MagicMock()
+        factory.create_session_repository.return_value = repo
+        historian = ChatHistorian(agent_factory=factory, config=MagicMock())
 
-        assert result is None
-        assert RAW_SID not in caplog.text
-        assert MASKED_SID in caplog.text
+        with caplog.at_level(logging.WARNING, logger="foundry_strands_agent.chat_historian"):
+            result = await historian.get_chat_sessions_history()
 
-    def test_session_str_on_parse_failure_redacts_session_id_in_logs(self, caplog):
-        blob = '{"session_id": "' + RAW_SID + '", broken'
-        with caplog.at_level(logging.ERROR, logger="foundry_strands_agent.chat_historian"):
-            result = _SessionFrom.session_str(blob)
-
-        assert result is None
+        assert result == []
         assert RAW_SID not in caplog.text
         assert MASKED_SID in caplog.text
 
@@ -162,7 +164,7 @@ class TestFactorySessionManagerMasking:
         # S3SessionManager construction touches boto3; patch it so the test stays
         # offline and we only exercise the masked log emission.
         with (
-            patch("foundry_strands_agent.factory.S3SessionManager", return_value=MagicMock()),
+            patch("foundry_strands_agent.factory.GuardedS3SessionManager", return_value=MagicMock()),
             caplog.at_level(logging.INFO, logger="foundry_strands_agent.factory"),
         ):
             _default_s3_session_manager(session_id=RAW_SID, s3_bucket="b")

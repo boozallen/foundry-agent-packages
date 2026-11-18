@@ -3,6 +3,7 @@
 """Shared test fixtures for foundry-strands-agent."""
 
 import secrets
+from collections.abc import Callable
 
 import pytest
 
@@ -11,3 +12,15 @@ import pytest
 def _set_encryption_key(monkeypatch):
     """Provide SESSION_ENCRYPTION_KEY for all tests that use file session managers."""
     monkeypatch.setenv("SESSION_ENCRYPTION_KEY", secrets.token_hex(32))
+
+
+@pytest.fixture
+def utf8_sized_dict() -> Callable[[str, int], dict[str, str]]:
+    """Build ``{"k": ...}``, about half ``char``, whose UTF-8 JSON encoding is exactly ``size`` bytes."""
+
+    def build(char: str, size: int) -> dict[str, str]:
+        char_bytes = len(char.encode("utf-8"))
+        count = size // (2 * char_bytes)
+        return {"k": char * count + "x" * (size - len('{"k": ""}') - count * char_bytes)}
+
+    return build

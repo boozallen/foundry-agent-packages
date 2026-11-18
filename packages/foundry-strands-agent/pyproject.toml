@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "foundry-strands-agent"
-version = "2.6.0"
+version = "3.2.4"
 license = "Apache-2.0"
 license-files = ["LICENSE*", "NOTICE*"]
 description = "Foundry Strands Agent — Strands SDK adapter, StrandsAgentFactory, StrandsAgentConfig, security"
@@ -17,14 +17,14 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "foundry-agent-core>=1.0.0",
+    "foundry-agent-core>=1.3.0",
     "foundry-agent-config>=1.0.0",
-    "strands-agents[a2a,openai]>=0.1.0",
-    "strands-agents-tools[a2a-client]>=0.1.0",
+    "strands-agents[a2a,openai]>=1.57.0",
+    "strands-agents-tools[a2a-client]>=0.8.9,<0.9.0",
     "openai",
     "pydantic>=2.0",
     "botocore>=1.35.0",
-    "mcp>=1.29.1,<2.0.0",
+    "mcp>=1.30.0,<2.0.0",
     "cryptography>=43.0",
 ]
 
@@ -32,7 +32,7 @@ dependencies = [
 # (`uv run pytest` / `ruff` / `basedpyright` from THIS directory) resolve on a
 # cold clone without pointing uv at the workspace root. Versions mirror the
 # workspace root's `[dependency-groups] dev` so a single resolution satisfies
-# both. See openspec/changes/foundry-850-standardize-testing/design.md.
+# both.
 [dependency-groups]
 dev = [
     "basedpyright==1.33.0",
@@ -48,7 +48,7 @@ dev = [
 packages = ["src/foundry_strands_agent"]
 
 # Pytest + coverage config is package-local so each package owns its own
-# coverage source path and threshold. See docs/foundry/internal/coverage.md.
+# coverage source path and threshold.
 # --cov-fail-under enforces the 70% threshold on the pytest invocation itself
 # (the coverage.report fail_under below only gates `coverage report`/`html`).
 # The unit/integration split is by DIRECTORY (`tests/unit/`,

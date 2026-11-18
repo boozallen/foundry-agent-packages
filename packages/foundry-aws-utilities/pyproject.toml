@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foundry-aws-utilities"
+version = "2.2.0"
+license = "Apache-2.0"
+license-files = ["LICENSE*", "NOTICE*"]
+description = "AWS utilities package for Foundry platform"
+authors = [{ name = "Booz Allen Hamilton" }]
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "boto3>=1.42.24,<2.0.0",
+    "botocore>=1.42.24,<2.0.0",
+    "fastmcp>=3.2.4,<4.0.0",
+    "starlette>=1.3.1",
+]
+
+[project.scripts]
+foundry-dynamodb-mcp-server = "foundry_aws_utilities.mcp_server:main"
+foundry-s3-mcp-server = "foundry_aws_utilities.s3_mcp_server:main"
+foundry-bedrock-kb-mcp-server = "foundry_aws_utilities.bedrock_kb_mcp_server:main"
+
+# Package-local dev tooling so this package's own justfile recipes
+# (`uv run pytest` / `ruff` / `basedpyright` from THIS directory) resolve on a
+# cold clone without pointing uv at the workspace root. Versions mirror the
+# workspace root's `[dependency-groups] dev` so a single resolution satisfies
+# both.
+[dependency-groups]
+dev = [
+    "basedpyright==1.33.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "ruff==0.14.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foundry_aws_utilities"]
+
+[tool.uv]
+constraint-dependencies = ["authlib>=1.6.9"]
+
+[tool.ruff]
+# Inherit workspace ruff config (line-length, target-version, etc.) so this
+# package opts in to its own lint rules without re-stating shared settings.
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint]
+# STIG V-222604 (CCI-001310) — prohibit command-injection sinks. Enforced in CI.
+extend-select = ["S102", "S307", "S602", "S603", "S604", "S605", "S606", "S607"]
+
+# The unit/integration split is by DIRECTORY (`tests/unit/`, `tests/integration/`),
+# not by marker, so addopts carries no marker expression. The `integration` marker
+# below stays declared as a trait tag; nothing selects on it.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src"]
+addopts = "-v --tb=short --strict-markers --strict-config --import-mode=importlib --cov=src/foundry_aws_utilities --cov-report=term-missing --cov-report=html:htmlcov/foundry_aws_utilities --cov-fail-under=70"
+markers = [
+    "integration: test requires an external service, network access, or real credentials (trait tag only; the tier is set by tests/integration/)",
+    "unit: unit tests (fast, no external services or credentials required)",
+    "slow: tests that may take longer to run",
+    "network: tests that require network access",
+    "aws: tests that interact with AWS services",
+]
+# boto3/botocore emit datetime and pkg_resources deprecation noise this repo
+# cannot act on, from no single easily-scoped module — hence the broad,
+# unscoped ignores below rather than a module-scoped one.
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore:.*datetime.*:DeprecationWarning",
+    "ignore:.*pkg_resources.*:DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/foundry_aws_utilities"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+# Mirrors the workspace root's [tool.basedpyright] so `just type-check` run
+# from THIS directory resolves the same settings the root run uses (basedpyright
+# does not walk up to a parent pyproject.toml the way ruff `extend` does).
+[tool.basedpyright]
+pythonVersion = "3.13"
+include = ["src"]
+exclude = ["**/build", "**/dist", "**/.venv", "**/__pycache__"]
+typeCheckingMode = "basic"

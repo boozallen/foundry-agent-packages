@@ -90,7 +90,7 @@ class QueryOrchestrator(QueryProcessor):
             extra={
                 "session_id": mask_session_id(request.session_id),
                 "query_id": query_id,
-                "query": (request.query[:100] + "..." if len(request.query) > 100 else request.query),
+                "query_length": len(request.query),
             },
         )
 
@@ -439,7 +439,7 @@ class QueryOrchestrator(QueryProcessor):
                     context={
                         "session_id": mask_session_id(request.session_id),
                         "query_id": query_id,
-                        "query": request.query,
+                        "query_length": len(request.query),
                     },
                 ) from timeout_err
 

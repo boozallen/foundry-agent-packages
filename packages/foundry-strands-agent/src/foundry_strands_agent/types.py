@@ -6,8 +6,8 @@ Strands-specific types (QueryRequest, SearchResult, DocumentChunk, QueryResponse
 Framework-agnostic types (AgentRequest, AgentResponse) live in foundry-agent-core.
 """
 
-import json
 from datetime import datetime
+from functools import partial
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, StringConstraints, field_serializer, field_validator
@@ -20,6 +20,7 @@ from foundry_agent_core import (
     _MAX_QUERY_LEN,
     _MAX_RESULTS,
     mask_session_id,
+    validate_bounded_dict,
 )
 
 _MAX_SESSION_ID_LEN = 128
@@ -51,21 +52,20 @@ _BoundedContentPreview = Annotated[str, StringConstraints(min_length=1, max_leng
 _BoundedChunkContent = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_CHUNK_CONTENT_LEN)]
 _BoundedResponseText = Annotated[str, StringConstraints(min_length=1, max_length=_MAX_RESPONSE_TEXT_LEN)]
 
-
-def _validate_bounded_map(
-    value: dict[str, Any] | None, *, max_keys: int, max_key_len: int, max_bytes: int
-) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if len(value) > max_keys:
-        raise ValueError(f"dictionary exceeds {max_keys} top-level keys")
-    for key in value:
-        if len(key) > max_key_len:
-            raise ValueError(f"dictionary key exceeds {max_key_len} characters")
-    serialized_size = len(json.dumps(value, default=str))
-    if serialized_size > max_bytes:
-        raise ValueError(f"dictionary serializes above {max_bytes} bytes")
-    return value
+_bound_context = partial(
+    validate_bounded_dict,
+    max_keys=_MAX_CONTEXT_KEYS,
+    max_key_len=_MAX_CONTEXT_KEY_LEN,
+    max_bytes=_MAX_CONTEXT_BYTES,
+    label="dictionary",
+)
+_bound_metadata = partial(
+    validate_bounded_dict,
+    max_keys=_MAX_METADATA_KEYS,
+    max_key_len=_MAX_METADATA_KEY_LEN,
+    max_bytes=_MAX_METADATA_BYTES,
+    label="dictionary",
+)
 
 
 class QueryRequest(BaseModel):
@@ -107,12 +107,7 @@ class QueryRequest(BaseModel):
     @field_validator("context", mode="after")
     @classmethod
     def validate_context_bounds(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        return _validate_bounded_map(
-            v,
-            max_keys=_MAX_CONTEXT_KEYS,
-            max_key_len=_MAX_CONTEXT_KEY_LEN,
-            max_bytes=_MAX_CONTEXT_BYTES,
-        )
+        return _bound_context(v)
 
 
 class SearchResult(BaseModel):
@@ -135,13 +130,7 @@ class SearchResult(BaseModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def validate_metadata_bounds(cls, v: dict[str, Any]) -> dict[str, Any]:
-        bounded = _validate_bounded_map(
-            v,
-            max_keys=_MAX_METADATA_KEYS,
-            max_key_len=_MAX_METADATA_KEY_LEN,
-            max_bytes=_MAX_METADATA_BYTES,
-        )
-        return bounded or {}
+        return _bound_metadata(v) or {}
 
 
 class DocumentChunk(BaseModel):
@@ -153,7 +142,7 @@ class DocumentChunk(BaseModel):
     content: _BoundedChunkContent
     metadata: dict[str, Any]
     source_document_id: _BoundedDocumentId
-    chunk_index: int = Field(ge=0, le=10_000_000)
+    chunk_index: int = Field(ge=0, le=_MAX_DOCUMENT_SIZE)
     character_start: int = Field(ge=0, le=_MAX_DOCUMENT_SIZE)
     character_end: int = Field(ge=0, le=_MAX_DOCUMENT_SIZE)
 
@@ -174,13 +163,7 @@ class DocumentChunk(BaseModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def validate_metadata_bounds(cls, v: dict[str, Any]) -> dict[str, Any]:
-        bounded = _validate_bounded_map(
-            v,
-            max_keys=_MAX_METADATA_KEYS,
-            max_key_len=_MAX_METADATA_KEY_LEN,
-            max_bytes=_MAX_METADATA_BYTES,
-        )
-        return bounded or {}
+        return _bound_metadata(v) or {}
 
     @field_validator("character_end")
     @classmethod
@@ -214,12 +197,7 @@ class QueryResponse(BaseModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def validate_metadata_bounds(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        return _validate_bounded_map(
-            v,
-            max_keys=_MAX_METADATA_KEYS,
-            max_key_len=_MAX_METADATA_KEY_LEN,
-            max_bytes=_MAX_METADATA_BYTES,
-        )
+        return _bound_metadata(v)
 
 
 ContentId = str

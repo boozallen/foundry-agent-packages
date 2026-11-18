@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for core domain types and value objects."""
 
+import json
 from datetime import datetime
 
 import pytest
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from foundry_agent_core import _MAX_CONTENT_LEN, _MAX_QUERY_LEN
 from foundry_strands_agent.types import (
+    _MAX_CONTEXT_BYTES,
     _MAX_DOCUMENT_SIZE,
     DocumentChunk,
     QueryRequest,
@@ -266,6 +268,24 @@ class TestQueryRequest:
         with pytest.raises(ValidationError):
             QueryRequest(query="test", context={f"k{i}": i for i in range(33)})
 
+    @pytest.mark.parametrize("char", ["λ", "😀"])
+    def test_context_non_ascii_at_byte_cap_accepted(self, char, utf8_sized_dict):
+        r"""The context byte cap counts UTF-8 bytes, not ``\uXXXX`` escapes."""
+        context = utf8_sized_dict(char, _MAX_CONTEXT_BYTES)
+        assert len(json.dumps(context, ensure_ascii=False).encode("utf-8")) == _MAX_CONTEXT_BYTES
+        assert len(json.dumps(context)) > _MAX_CONTEXT_BYTES
+        assert QueryRequest(query="test", context=context).context == context
+
+    @pytest.mark.parametrize("char", ["λ", "😀"])
+    def test_context_non_ascii_over_byte_cap_raises(self, char, utf8_sized_dict):
+        """A non-ASCII context one UTF-8 byte over the cap is rejected."""
+        with pytest.raises(ValidationError, match="dictionary serializes above"):
+            QueryRequest(query="test", context=utf8_sized_dict(char, _MAX_CONTEXT_BYTES + 1))
+
+    def test_context_lone_surrogate_accepted(self):
+        """A lone surrogate, which JSON input can carry, is sized rather than rejected."""
+        assert QueryRequest(query="test", context={"k": "\ud83d"}).context == {"k": "\ud83d"}
+
     def test_similarity_threshold_boundary_values(self):
         """Test similarity_threshold at boundary values."""
         req0 = QueryRequest(query="Test", similarity_threshold=0.0)
@@ -456,6 +476,32 @@ class TestDocumentChunk:
                 source_document_id="doc-1",
                 chunk_index=0,
                 character_start=-1,
+                character_end=10,
+            )
+
+    def test_chunk_index_at_max_document_size_passes(self):
+        """chunk_index at the canonical document-size bound is accepted."""
+        chunk = DocumentChunk(
+            chunk_id="chunk-1",
+            content="Content",
+            metadata={},
+            source_document_id="doc-1",
+            chunk_index=_MAX_DOCUMENT_SIZE,
+            character_start=0,
+            character_end=10,
+        )
+        assert chunk.chunk_index == _MAX_DOCUMENT_SIZE
+
+    def test_chunk_index_above_max_document_size_raises(self):
+        """Test that chunk_index beyond the document-size bound raises ValueError."""
+        with pytest.raises(ValidationError):
+            DocumentChunk(
+                chunk_id="chunk-1",
+                content="Content",
+                metadata={},
+                source_document_id="doc-1",
+                chunk_index=_MAX_DOCUMENT_SIZE + 1,
+                character_start=0,
                 character_end=10,
             )
 

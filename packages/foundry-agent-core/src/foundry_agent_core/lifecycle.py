@@ -277,7 +277,7 @@ class RequestLifecycleManager:
                 extra={"session_id": mask_session_id(session_id), "query_id": query_id},
             )
 
-    # TODO(dead-code): no live callers — candidate for removal, see fix-session-id-log-masking design.md D4
+    # TODO(dead-code): not used by any Foundry package; candidate for deprecation and removal in a future major release.
     async def execute_with_retry(
         self,
         context: ExecutionContext,
@@ -422,7 +422,7 @@ class RequestLifecycleManager:
             },
         )
 
-    # TODO(dead-code): no live callers — candidate for removal, see fix-session-id-log-masking design.md D4
+    # TODO(dead-code): not used by any Foundry package; candidate for deprecation and removal in a future major release.
     def get_active_contexts(self) -> dict[str, ExecutionContext]:
         """Get currently active execution contexts.
 
@@ -431,7 +431,7 @@ class RequestLifecycleManager:
         """
         return self._active_contexts.copy()
 
-    # TODO(dead-code): no live callers — candidate for removal, see fix-session-id-log-masking design.md D4
+    # TODO(dead-code): not used by any Foundry package; candidate for deprecation and removal in a future major release.
     def get_retry_statistics(self) -> dict[str, dict[str, Any]]:
         """Get retry statistics for all contexts.
 

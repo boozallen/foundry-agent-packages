@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.13%2B-blue)
 
-AWS Strands SDK adapter that implements the `foundry-agent-core`
+AWS Strands SDK adapter that implements the [`foundry-agent-core`](../foundry-agent-core/README.md)
 protocol surface. The core feature is an autonomous agent loop:
 `AgentService` receives a query, creates a `strands.Agent` with the
 configured tools, and lets the agent decide which tools to call and when
@@ -15,7 +15,7 @@ protocol-based factory.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../docs/foundry/releases/adopting.md)
+See [Adopting these packages](../../docs/foundry/releases/adopting.md)
 for the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -65,6 +65,13 @@ asyncio.run(main())
 - **Outbound mTLS** supported via `FOUNDRY_TLS_CLIENT_CERTFILE` and `FOUNDRY_TLS_CLIENT_KEYFILE` env vars for agent-to-agent calls requiring mutual TLS (DISA STIG V-222532/V-222534)
 - **File-backed sessions** encrypted with AES-256-GCM via `SESSION_ENCRYPTION_KEY` (DISA STIG V-222588/V-222589)
 - **Session destruction** via `ChatHistoryManager.on_logoff(session_id)` (DISA STIG V-222578)
+- **Dangling `tool_use` guard**: restoring a session (FILE or S3 backend) whose persisted history
+  ends in an unresolved assistant `tool_use` block never lets that block execute without an
+  intervening model turn - closes a gap left by the Strands SDK's own mitigation, which only
+  covers resuming with a new prompt, not a bare `prompt=None` resume. Configurable via
+  `session_restore_dangling_tool_use` (`STRANDS_SESSION_RESTORE_DANGLING_TOOL_USE`):
+  `"sanitize"` (default - insert a synthetic `tool_result`) or `"reject"` (raise
+  `AgentCreationError` instead). See `session_guard.py`.
 
 ## Security policy: transport encryption
 
@@ -105,6 +112,12 @@ export FOUNDRY_TLS_CLIENT_KEYFILE=/path/to/client.key
 Setting only one of the two logs a warning and skips client certificate
 loading; it does not raise an error. A path that does not exist at either
 variable raises `FileNotFoundError` naming the missing file.
+
+On POSIX platforms, the key file's permission bits are checked before it is
+loaded: a `FOUNDRY_TLS_CLIENT_KEYFILE` readable or writable by group or other
+logs a warning naming the offending bits (`chmod 600` to fix). This is a
+detection aid, not enforcement — the key is still loaded either way, and the
+check is skipped entirely on non-POSIX platforms (STIG V-222551).
 
 ## Documentation
 

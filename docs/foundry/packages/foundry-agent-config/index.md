@@ -13,7 +13,7 @@ against a user-supplied `BaseModel`.
 
 Install a released wheel from this repo's
 [GitHub Releases](https://github.com/boozallen/foundry-agent-packages/releases).
-See [docs/foundry/releases/adopting.md](../../releases/adopting.md) for
+See [Adopting these packages](../../releases/adopting.md) for
 the full flow - pinning a release URL directly for evaluation, or
 hosting the wheel in your own index for production, plus verifying the
 SBOM/scan assets.
@@ -49,11 +49,11 @@ config = load_config(AppConfig, Path("config.yaml"), env_prefix="MYAPP")
 The loader bounds YAML file size, environment-variable size, and key
 counts to prevent resource-exhaustion attacks (DISA STIG V-222612).
 Command-execution sinks are prohibited and gated by Ruff `S6xx` rules
-plus `bandit` narrow-set (DISA STIG V-222604).
+plus `bandit` narrow-set in CI (DISA STIG V-222604).
 
 ## Reference
 
-- [README](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-config/README.md)
-- [Changelog](https://github.com/boozallen/foundry-agent-packages/blob/develop/packages/foundry-agent-config/CHANGELOG.md)
-- [Source](https://github.com/boozallen/foundry-agent-packages/tree/develop/packages/foundry-agent-config)
-- [License (Apache-2.0)](https://github.com/boozallen/foundry-agent-packages/blob/develop/LICENSE)
+- [README](../../../../packages/foundry-agent-config/README.md)
+- [Changelog](../../../../packages/foundry-agent-config/CHANGELOG.md)
+- [Source](../../../../packages/foundry-agent-config/)
+- [License (Apache-2.0)](../../../../LICENSE)
