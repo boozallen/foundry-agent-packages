@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
-- Security and maintenance updates (4)
+- Security and maintenance updates
 - standardize per-package testing practices
 - standardize pytest config across packages
 - Packaging and dependency updates

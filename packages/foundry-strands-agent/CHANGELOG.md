@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
-- Security and maintenance updates (9)
+- Security and maintenance updates
 - document tls warning volume change
 - Add per-context agent builder for A2A agent_factory=
 - Packaging and dependency updates
